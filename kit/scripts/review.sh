@@ -47,7 +47,7 @@ ${diff}
 PROMPT
 
 set +e
-OPENCODE_PERMISSIONS=readonly bash "$here/adapters/opencode.sh" --prompt "$out/prompt.md" --out "$out" ${REVIEW_MODEL:+--model "$REVIEW_MODEL"}
+OPENCODE_PERMISSIONS="readonly" bash "$here/adapters/opencode.sh" --prompt "$out/prompt.md" --out "$out" ${REVIEW_MODEL:+--model "$REVIEW_MODEL"}
 code=$?
 set -e
 if [ "$code" -ne 0 ]; then echo "review.sh: free review unavailable (exit $code); continue with the reviewer subagent" >&2; exit 0; fi

@@ -27,7 +27,7 @@ done
 
 set +e
 # your-cli --model "$model" --no-shell --cwd . <"$prompt" >"$out/report.md" 2>"$out/log.txt"
-echo "adapter not implemented" >"$out/log.txt"
+echo "adapter not implemented (prompt: $prompt, model: ${model:-default})" >"$out/log.txt"
 code=1
 set -e
 
