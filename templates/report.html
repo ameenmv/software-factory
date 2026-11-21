@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Factory Scorecard</title>
+<style>
+  :root { --bg:#fafaf9; --fg:#1c1917; --muted:#78716c; --line:#e7e5e4; --bar:#0f766e; --bad:#b91c1c; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0c0a09; --fg:#f5f5f4; --muted:#a8a29e; --line:#292524; --bar:#2dd4bf; --bad:#f87171; } }
+  body { margin:0; padding:32px 16px; background:var(--bg); color:var(--fg); font:15px/1.5 ui-sans-serif, system-ui, sans-serif; }
+  main { max-width:960px; margin:0 auto; }
+  h1 { font-size:22px; margin:0 0 4px; } p { color:var(--muted); margin:0 0 24px; }
+  .wrap { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+  th, td { text-align:end; padding:10px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th:first-child, td:first-child { text-align:start; }
+  th { font-weight:600; color:var(--muted); font-size:13px; }
+  .rate { display:flex; align-items:center; gap:8px; justify-content:flex-end; }
+  .track { width:80px; height:6px; background:var(--line); border-radius:3px; overflow:hidden; }
+  .fill { height:100%; background:var(--bar); }
+  .bad { color:var(--bad); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Implementer scorecard</h1>
+  <p>From the factory ledger. Accept rate is accepted runs over all runs, including quota and failures.</p>
+  <div class="wrap"><table id="t"><thead><tr>
+    <th>Implementer</th><th>Runs</th><th>Accepted</th><th>Rejected</th><th>Failed</th><th>Quota</th><th>Accept rate</th><th>Avg min</th><th>Cost / accepted</th><th>Findings</th>
+  </tr></thead><tbody></tbody></table></div>
+</main>
+<script>
+  const rows = __DATA__;
+  const tb = document.querySelector('#t tbody');
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    const cells = [r.name, r.runs, r.accepted, r.rejected, r.failed, r.quota, null, r.avgMinutes.toFixed(1),
+      r.costPerAccepted == null ? '-' : '$' + r.costPerAccepted.toFixed(2), r.findings];
+    cells.forEach((c, i) => {
+      const td = document.createElement('td');
+      if (i === 6) {
+        const pct = Math.round(r.acceptRate * 100);
+        td.innerHTML = '<div class="rate"><div class="track"><div class="fill"></div></div><span></span></div>';
+        td.querySelector('.fill').style.width = pct + '%';
+        td.querySelector('span').textContent = pct + '%';
+      } else td.textContent = c;
+      if ((i === 3 || i === 4) && c > 0) td.className = 'bad';
+      tr.appendChild(td);
+    });
+    tb.appendChild(tr);
+  }
+</script>
+</body>
+</html>

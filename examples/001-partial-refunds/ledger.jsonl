@@ -1,0 +1,5 @@
+{"at":"2026-11-02T09:05:11Z","feature":"001-partial-refunds","brief":"B001","implementer":"opencode","model":"opencode/big-pickle","outcome":"accepted","minutes":4,"cost_usd":0,"review_findings":0}
+{"at":"2026-11-02T09:31:40Z","feature":"001-partial-refunds","brief":"B002","implementer":"opencode","model":"opencode/big-pickle","outcome":"quota","minutes":2}
+{"at":"2026-11-02T09:44:02Z","feature":"001-partial-refunds","brief":"B002","implementer":"claude-headless","model":"claude-sonnet-5-5","outcome":"accepted","minutes":11,"cost_usd":0.38,"review_findings":3}
+{"at":"2026-11-02T10:02:57Z","feature":"001-partial-refunds","brief":"B003","implementer":"opencode","model":"opencode/big-pickle","outcome":"rejected","minutes":6,"note":"invented useRefunds() composable; brief lacked the fetch helper signature"}
+{"at":"2026-11-02T10:20:13Z","feature":"001-partial-refunds","brief":"B003","implementer":"opencode","model":"opencode/big-pickle","outcome":"accepted","minutes":5,"cost_usd":0,"review_findings":2}

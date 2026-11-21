@@ -1,0 +1,21 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: git config --global user.email ci@example.com && git config --global user.name ci
+      - run: npm test
+      - run: node bin/factory.mjs brief check examples/001-partial-refunds/briefs/B001.md
+      - name: shellcheck
+        run: shellcheck -S warning kit/scripts/*.sh kit/scripts/adapters/*.sh
