@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
-import { globToRegExp, parseFrontmatter, renderHandbook, scopeCheck, section, selectHandbook, summarize, validateBrief } from '../lib/index.mjs';
+import { globToRegExp, parseFrontmatter, renderHandbook, scopeCheck, section, selectHandbook, summarize, summarizeHandbook, validateBrief } from '../lib/index.mjs';
 
 const PKG = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 let repo;
@@ -395,6 +395,84 @@ describe('handbook injection', () => {
     assert.match(prompt, /result helper/);
     const row = JSON.parse(readFileSync(join(repo, 'factory/ledger.jsonl'), 'utf8').trim().split('\n').at(-1));
     assert.equal(row.handbook.length, 2);
+  });
+});
+
+describe('evals', () => {
+  test('summarizeHandbook compares accept rate with and without each part', () => {
+    const rows = summarizeHandbook([
+      { outcome: 'accepted', handbook: ['a', 'b'] },
+      { outcome: 'accepted', handbook: ['a'] },
+      { outcome: 'rejected', handbook: ['b'] },
+      { outcome: 'rejected', handbook: [] },
+      { outcome: 'quota', handbook: ['b'] },
+      { outcome: 'accepted' },
+    ]);
+    const a = rows.find((r) => r.part === 'a');
+    assert.equal(a.runsWith, 2);
+    assert.equal(a.rateWith, 1);
+    assert.equal(a.rateWithout, 0);
+    assert.equal(rows[0].part, 'a');
+    assert.equal(rows.find((r) => r.part === 'b').runsWith, 2); // the quota row is left out
+  });
+
+  test('ledger add inherits the handbook parts of the last delegated run', () => {
+    const d = factory('delegate', 'specs/001-greet/briefs/b1.md', '--only', 'node-ok');
+    assert.equal(d.status, 0, d.stdout + d.stderr);
+    const r = factory('ledger', 'add', '--feature', '001-greet', '--brief', 'b1', '--implementer', 'node-ok', '--outcome', 'accepted');
+    assert.equal(r.status, 0, r.stderr);
+    const row = JSON.parse(readFileSync(join(repo, 'factory/ledger.jsonl'), 'utf8').trim().split('\n').at(-1));
+    assert.ok(Array.isArray(row.handbook) && row.handbook.length === 2, JSON.stringify(row));
+    assert.match(factory('report', '--by', 'handbook').stdout, /\| \.claude\/skills\/demo-engineering\/references\/backend\.md \|/);
+  });
+
+  test('eval scores each case per lane in a worktree and leaves the repo untouched', () => {
+    sh('git', ['checkout', '-q', '--', '.']);
+    const adapters = join(repo, 'scripts/factory/adapters');
+    // Writes whatever the case asks for in its Context section: "WRITE <file> <text>".
+    writeFileSync(join(adapters, 'eval-writer.mjs'), `import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+const arg = (k) => process.argv[process.argv.indexOf(k) + 1];
+const prompt = readFileSync(arg('--prompt'), 'utf8');
+if (/check:/.test(prompt)) process.exit(9);
+for (const m of prompt.matchAll(/^WRITE (\\S+) (.*)$/gm)) { mkdirSync(dirname(m[1]), { recursive: true }); writeFileSync(m[1], m[2] + '\\n'); }
+writeFileSync(arg('--out') + '/report.md', 'done\\n');
+`);
+    writeFileSync(join(adapters, 'eval-quota.mjs'), 'process.exit(75);\n');
+    const kase = (name, files, write, check) => {
+      mkdirSync(join(repo, 'evals', name), { recursive: true });
+      writeFileSync(join(repo, 'evals', name, 'case.md'), goodBrief(name, files).replace('gates:\n  - test\n', `gates:\n  - test\n${check ? `check: ${check}\n` : ''}`).replace('## Context\n', `## Context\nWRITE ${write}\n`));
+    };
+    kase('in-scope', ['src/index.js'], 'src/index.js export const greet = 1;', 'node -e "process.exit(require(\'fs\').readFileSync(\'src/index.js\',\'utf8\').includes(\'greet\')?0:1)"');
+    kase('wanders', ['src/index.js'], 'src/other.js nope');
+    kase('wrong-answer', ['src/index.js'], 'src/index.js export {};', 'node -e "process.exit(1)"');
+    const cfg = join(repo, 'factory.config.json');
+    const config = JSON.parse(readFileSync(cfg, 'utf8'));
+    config.implementers = [
+      { name: 'eval-writer', adapter: 'scripts/factory/adapters/eval-writer.mjs' },
+      { name: 'eval-quota', adapter: 'scripts/factory/adapters/eval-quota.mjs' },
+    ];
+    writeFileSync(cfg, JSON.stringify(config));
+    sh('git', ['add', '-A']);
+    sh('git', ['commit', '-qm', 'eval cases', '--no-verify']);
+    const head = sh('git', ['rev-parse', 'HEAD']);
+
+    const r = factory('eval', '--min-pass', '0.5');
+    assert.match(r.stdout, /eval: in-scope\/eval-writer pass/);
+    assert.match(r.stdout, /eval: wanders\/eval-writer fail \(out of scope: src\/other\.js\)/);
+    assert.match(r.stdout, /eval: wrong-answer\/eval-writer fail \(check failed\)/);
+    assert.match(r.stdout, /eval: in-scope\/eval-quota quota/);
+    assert.match(r.stdout, /\| eval-writer \| 1 \| 2 \| 0 \| 33% \|/);
+    assert.equal(r.status, 1); // 33% is below --min-pass 0.5
+    assert.match(r.stderr, /below --min-pass/);
+
+    assert.equal(sh('git', ['status', '--porcelain']).trim(), '');
+    assert.equal(sh('git', ['rev-parse', 'HEAD']), head);
+    assert.equal(sh('git', ['worktree', 'list']).trim().split('\n').length, 1);
+
+    const one = factory('eval', '--case', 'in-scope', '--only', 'eval-writer', '--handbook', 'off');
+    assert.equal(one.status, 0, one.stdout + one.stderr);
+    assert.match(one.stdout, /handbook off/);
   });
 });
 

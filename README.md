@@ -124,6 +124,7 @@ factory risk                               # exit 3 if auth, payments or migrati
 factory gates                              # run every gate, stamp the tree
 factory ledger add --feature 001-partial-refunds --brief B001 --implementer opencode --outcome accepted --minutes 4
 factory report --html scorecard.html       # implementer scorecard
+factory eval --min-pass 0.8                # fixed cases on every lane, scored by gates and checks
 ```
 
 (`factory` is `node factory/cli/bin/factory.mjs` inside an installed repo.)

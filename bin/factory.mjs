@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // factory: the command line for the Software Factory pipeline. Zero dependencies.
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -22,6 +22,7 @@ import {
   stampStatus,
   stagesFor,
   summarize,
+  summarizeHandbook,
   treeFingerprint,
   validateBrief,
 } from '../lib/index.mjs';
@@ -118,6 +119,12 @@ Briefs and scope
   risk [--base REF]               List changed files that match riskyPaths
   delegate <brief> [--only name]  Send a brief to the implementer lanes in order; quota falls through
   handbook <brief>                Show which handbook parts delegate injects for this brief
+
+Evals
+  eval [dir] [--only name] [--case name] [--repeat N] [--handbook off] [--min-pass 0.8] [--keep]
+                                  Run evals/<case>/case.md on each lane in a fresh worktree;
+                                  score: completed, in scope, gates green, case check passes
+  report --by handbook            Accept rate with vs without each injected handbook part
 
 Gates and ledger
   gates [--only name]             Run every configured gate; stamp the tree when all pass
@@ -307,7 +314,7 @@ Setup
     mkdirSync(runDir, { recursive: true });
     const prompt = join(runDir, 'prompt.md');
     const handbook = selectHandbook(root, config, r.data.allowed_files ?? []);
-    writeFileSync(prompt, IMPLEMENTER_RULES + renderHandbook(handbook) + 'The brief follows.\n\n---\n\n' + readFileSync(briefPath, 'utf8'));
+    writeFileSync(prompt, buildPrompt(handbook, readFileSync(briefPath, 'utf8')));
     const injected = handbook.parts.map((p) => p.source);
     if (handbook.dir) out(`delegate: handbook context: ${injected.length ? injected.join(', ') : 'none matched'}${handbook.skipped.length ? ` (${handbook.skipped.length} over budget)` : ''}`);
 
@@ -320,15 +327,8 @@ Setup
       const outDir = join(runDir, lane.name);
       mkdirSync(outDir, { recursive: true });
       out(`delegate: ${id} -> ${lane.name}${lane.model ? ` (${lane.model})` : ''}`);
-      const adapter = join(root, lane.adapter);
-      const args = ['--prompt', prompt, '--out', outDir, ...(lane.model ? ['--model', lane.model] : [])];
-      const [bin, argv] = /\.sh$/.test(adapter) ? ['bash', [adapter, ...args]] : /\.m?js$/.test(adapter) ? [process.execPath, [adapter, ...args]] : [adapter, args];
-      const start = Date.now();
-      const run = spawnSync(bin, argv, { cwd: root, stdio: 'inherit' });
-      const code = run.error ? 127 : (run.status ?? 1);
-      const minutes = Math.ceil((Date.now() - start) / 60000);
-      const report = join(outDir, 'report.md');
-      const hasReport = existsSync(report) && readFileSync(report, 'utf8').trim().length > 0;
+      const { code, minutes, report, hasReport, error } = runAdapter(root, lane, prompt, outDir);
+      const run = { error };
 
       if (code === 75) {
         // Discard partial edits first, then record the attempt, so the rollback cannot erase the row.
@@ -343,6 +343,11 @@ Setup
         die(`${lane.name} failed (exit ${code}, report ${hasReport ? 'present' : 'missing'}). Log: ${join(outDir, 'log.txt')}`);
       }
 
+      // The orchestrator records accepted/rejected later with `ledger add`; leave it what this run had.
+      const note = lastRunPath(root, config, feature, id);
+      mkdirSync(dirname(note), { recursive: true });
+      writeFileSync(note, JSON.stringify({ implementer: lane.name, model: lane.model, handbook: injected }));
+
       out(`\n== implementer report (${report})`);
       out(readFileSync(report, 'utf8').trimEnd());
       out('\n== scope');
@@ -352,6 +357,104 @@ Setup
       return;
     }
     die(`no implementer completed ${id}`);
+  },
+
+  // Run fixed cases against implementer lanes, each in a fresh worktree of HEAD, and score them
+  // without a human: the run completed, the diff stays in scope, the gates pass, and the case's
+  // hidden `check` command passes. Nothing touches your working tree or the ledger.
+  eval([dir = 'evals'], flags) {
+    const { root, config } = ctx();
+    const casesDir = resolve(root, dir);
+    if (!existsSync(casesDir)) die(`no eval cases at ${dir}/ (one folder per case, each with case.md)`);
+    const cases = readdirSync(casesDir)
+      .filter((c) => existsSync(join(casesDir, c, 'case.md')))
+      .filter((c) => !flags.case || c === flags.case)
+      .sort();
+    if (!cases.length) die(flags.case ? `no case named "${flags.case}"` : `no cases in ${dir}/`);
+    const lanes = (config.implementers ?? []).filter((i) => !flags.only || i.name === flags.only);
+    if (!lanes.length) die(flags.only ? `no implementer named "${flags.only}"` : 'no implementers configured');
+    const repeat = Math.max(1, Number(flags.repeat ?? 1));
+    const useHandbook = flags.handbook !== 'off';
+    if (git(['status', '--porcelain', '--', dir], root).trim()) err(`eval: ${dir}/ has uncommitted changes; cases run from HEAD, so commit them first`);
+
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+    const evalDir = join(root, config.stateDir, 'evals', stamp);
+    mkdirSync(evalDir, { recursive: true });
+    const results = [];
+
+    for (const name of cases) {
+      const text = readFileSync(join(casesDir, name, 'case.md'), 'utf8');
+      const r = validateBrief(text);
+      if (!r.data) die(`${dir}/${name}/case.md is not a valid brief: ${r.errors.join('; ')}`);
+      for (const lane of lanes) {
+        for (let i = 1; i <= repeat; i++) {
+          const label = `${name}/${lane.name}${repeat > 1 ? `#${i}` : ''}`;
+          const tag = `${name}--${lane.name}--${i}`;
+          const wt = join(evalDir, 'wt', tag);
+          const outDir = join(evalDir, 'out', tag);
+          mkdirSync(outDir, { recursive: true });
+          git(['worktree', 'add', '-q', '--detach', wt, 'HEAD'], root);
+          const result = { case: name, implementer: lane.name, model: lane.model, run: i, handbook: useHandbook };
+          try {
+            const handbook = useHandbook ? selectHandbook(wt, config, r.data.allowed_files ?? []) : { parts: [], skipped: [] };
+            const prompt = join(outDir, 'prompt.md');
+            // The check is the grader's, not the implementer's: keep it out of the prompt.
+            writeFileSync(prompt, buildPrompt(handbook, text.replace(/^check:.*\r?\n/m, '')));
+            if (config.evalSetup) {
+              const setup = spawnSync(config.evalSetup, { cwd: wt, shell: true, stdio: 'ignore' });
+              if (setup.status !== 0) throw Object.assign(new Error('setup'), { evalReason: `evalSetup failed: ${config.evalSetup}` });
+            }
+            out(`\n== eval ${label}`);
+            const run = runAdapter(wt, lane, prompt, outDir);
+            result.seconds = run.seconds;
+            if (run.code === 75) result.outcome = 'quota';
+            else if (run.code !== 0 || !run.hasReport) {
+              result.outcome = 'fail';
+              result.reason = `adapter exit ${run.code}${run.hasReport ? '' : ', no report'}`;
+            } else {
+              const changed = changedFiles(wt, 'HEAD');
+              const scope = scopeCheck(changed, r.data);
+              const gate = (config.gates ?? []).find((g) => spawnSync(g.run, { cwd: wt, shell: true, stdio: 'ignore' }).status !== 0);
+              const check = r.data.check ? spawnSync(String(r.data.check), { cwd: wt, shell: true, stdio: 'ignore' }).status === 0 : true;
+              result.changed = changed;
+              if (!changed.length) result.reason = 'no changes';
+              else if (!scope.ok) result.reason = `out of scope: ${[...scope.outside, ...scope.violations].join(', ')}`;
+              else if (gate) result.reason = `gate ${gate.name} failed`;
+              else if (!check) result.reason = 'check failed';
+              result.outcome = result.reason ? 'fail' : 'pass';
+            }
+          } catch (e) {
+            if (!e.evalReason) throw e;
+            result.outcome = 'error';
+            result.reason = e.evalReason;
+          } finally {
+            if (!flags.keep) {
+              git(['worktree', 'remove', '--force', wt], root);
+            }
+          }
+          out(`eval: ${label} ${result.outcome}${result.reason ? ` (${result.reason})` : ''}`);
+          results.push(result);
+          appendFileSync(join(evalDir, 'results.jsonl'), JSON.stringify(result) + '\n');
+        }
+      }
+    }
+    if (!flags.keep) git(['worktree', 'prune'], root);
+
+    out(`\n| implementer | passed | failed | quota | pass rate |\n|---|---|---|---|---|`);
+    let worst = 1;
+    for (const lane of lanes) {
+      const rows = results.filter((x) => x.implementer === lane.name);
+      const n = (o) => rows.filter((x) => x.outcome === o).length;
+      const scored = n('pass') + n('fail');
+      const rate = scored ? n('pass') / scored : null;
+      if (rate != null) worst = Math.min(worst, rate);
+      out(`| ${lane.name}${lane.model ? ` (${lane.model})` : ''} | ${n('pass')} | ${n('fail')} | ${n('quota')} | ${rate == null ? '-' : `${Math.round(rate * 100)}%`} |`);
+    }
+    out(`\nhandbook ${useHandbook ? 'on' : 'off'}; results: ${relPath(root, join(evalDir, 'results.jsonl'))}`);
+    if (flags['min-pass'] != null && worst < Number(flags['min-pass'])) {
+      err(`eval: pass rate ${Math.round(worst * 100)}% is below --min-pass ${flags['min-pass']}`);
+      process.exitCode = 1;
+    }
   },
 
   handbook([file]) {
@@ -375,7 +478,15 @@ Setup
   ledger([sub], flags) {
     if (sub !== 'add') die('usage: factory ledger add --feature F --brief B --implementer I --outcome O');
     const { root, config } = ctx();
+    // Carry over what the delegated run was given, so outcomes can be compared by handbook part.
+    let handbook;
+    const note = flags.feature && flags.brief ? lastRunPath(root, config, flags.feature, flags.brief) : null;
+    if (note && existsSync(note)) {
+      const last = JSON.parse(readFileSync(note, 'utf8'));
+      if (last.implementer === flags.implementer) handbook = last.handbook;
+    }
     const row = appendLedger(root, config, {
+      handbook,
       feature: flags.feature,
       brief: flags.brief,
       implementer: flags.implementer,
@@ -391,6 +502,18 @@ Setup
 
   report(_, flags) {
     const { root, config } = ctx();
+    if (flags.by === 'handbook') {
+      const rows = summarizeHandbook(readLedger(root, config));
+      if (!rows.length) return out('no ledger rows record handbook context yet (delegate records it from now on)');
+      const pct = (x) => (x == null ? '-' : `${Math.round(x * 100)}%`);
+      const pts = (x) => (x == null ? '-' : `${x >= 0 ? '+' : ''}${Math.round(x * 100)} pts`);
+      out('| handbook part | runs with | accept with | runs without | accept without | delta |');
+      out('|---|---|---|---|---|---|');
+      for (const r of rows) out(`| ${r.part} | ${r.runsWith} | ${pct(r.rateWith)} | ${r.runsWithout} | ${pct(r.rateWithout)} | ${pts(r.delta)} |`);
+      if (rows.some((r) => r.runsWith < 10 || r.runsWithout < 10)) out('\nFewer than 10 runs on a side: read the delta as a hint, not a result.');
+      out('Correlation only. For a controlled comparison run `factory eval --handbook off` against the default.');
+      return;
+    }
     const rows = summarize(readLedger(root, config));
     if (!rows.length) return out('ledger is empty');
     const pct = (x) => `${Math.round(x * 100)}%`;
@@ -576,6 +699,32 @@ try {
   fn(pos, flags);
 } catch (e) {
   die(e.message);
+}
+
+function buildPrompt(handbook, briefText) {
+  return IMPLEMENTER_RULES + renderHandbook(handbook) + 'The brief follows.\n\n---\n\n' + briefText;
+}
+
+// Run one adapter. cwd is the tree the implementer edits: the repo root, or an eval worktree.
+function runAdapter(cwd, lane, prompt, outDir) {
+  const adapter = join(cwd, lane.adapter);
+  const args = ['--prompt', prompt, '--out', outDir, ...(lane.model ? ['--model', lane.model] : [])];
+  const [bin, argv] = /\.sh$/.test(adapter) ? ['bash', [adapter, ...args]] : /\.m?js$/.test(adapter) ? [process.execPath, [adapter, ...args]] : [adapter, args];
+  const start = Date.now();
+  const run = spawnSync(bin, argv, { cwd, stdio: 'inherit' });
+  const report = join(outDir, 'report.md');
+  return {
+    code: run.error ? 127 : (run.status ?? 1),
+    error: run.error,
+    seconds: Math.round((Date.now() - start) / 1000),
+    minutes: Math.ceil((Date.now() - start) / 60000),
+    report,
+    hasReport: existsSync(report) && readFileSync(report, 'utf8').trim().length > 0,
+  };
+}
+
+function lastRunPath(root, config, feature, brief) {
+  return join(root, config.stateDir, 'last-run', `${feature}__${brief}.json`);
 }
 
 function relPath(root, p) {

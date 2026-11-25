@@ -64,6 +64,7 @@ following its own instructions; the factory reads its artifacts (`spec.md`, `pla
   "riskyPaths": ["**/auth/**"],           // triggers security-auditor
   "handbook": ".claude/skills/acme-engineering", // optional; found automatically if there is one *-engineering skill
   "handbookMaxChars": 16000,               // budget for handbook context injected into each brief
+  "evalSetup": "npm ci",                  // optional; runs in each eval worktree before the implementer
   "lockedPaths": ["src/generated/**"],    // agents may read, never write
   "protectedBranches": ["main"],          // agents never push here directly
   "stopRequiresGates": true,              // Stop hook enforcement
