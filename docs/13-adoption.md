@@ -19,7 +19,7 @@ your-repo/
     agents/                       architect, brief-writer, reviewer, security-auditor, test-author, verifier
     skills/software-factory/      the orchestrator procedure
   scripts/factory/
-    delegate.sh                   lane walker
+    delegate.sh                   wrapper for `factory delegate`
     review.sh                     free first-pass review
     adapters/                     opencode.sh, claude.sh, _template.sh
   factory/

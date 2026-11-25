@@ -62,7 +62,7 @@ flowchart LR
 
 1. **Define**: the request becomes `intake.md`, then a spec through [Spec Kit](https://github.com/github/spec-kit). Ambiguities are asked, never guessed.
 2. **Design**: the `architect` subagent writes contracts and slices; Spec Kit produces tasks and a cross-artifact analysis that must report `CRITICAL: 0`.
-3. **Build**: the `brief-writer` turns each slice into a validated brief. `delegate.sh` sends it to the first available implementer lane, falls through on quota, and checks the diff's scope.
+3. **Build**: the `brief-writer` turns each slice into a validated brief. `factory delegate` sends it to the first available implementer lane, falls through on quota, and checks the diff's scope.
 4. **Prove**: gates run and stamp the tree. Review is layered (free model, reviewer subagent, security auditor for risky paths) and every finding is reproduced before it is acted on. The verifier runs the app and records evidence.
 5. **Close**: one commit per slice, then a retro that changes the factory itself.
 
@@ -97,7 +97,7 @@ factory advance partial-refunds            # next stage, only if the exit criter
 
 factory brief new partial-refunds B001     # scaffold a brief
 factory brief check specs/001-*/briefs/*.md
-scripts/factory/delegate.sh specs/001-partial-refunds/briefs/B001.md
+factory delegate specs/001-partial-refunds/briefs/B001.md
 factory scope specs/001-partial-refunds/briefs/B001.md
 factory risk                               # exit 3 if auth, payments or migrations changed
 

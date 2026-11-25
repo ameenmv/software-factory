@@ -71,7 +71,7 @@ flowchart LR
 - **Exit**: every brief passes `factory brief check`.
 
 ### 8. implement
-- **Owner**: implementers, via `scripts/factory/delegate.sh`. The orchestrator reviews each diff.
+- **Owner**: implementers, via `factory delegate`. The orchestrator reviews each diff.
 - **Output**: code changes; one `accepted` ledger row per brief.
 - **Exit**: every brief id has an accepted row.
 

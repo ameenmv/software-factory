@@ -2,13 +2,14 @@
 // factory: the command line for the Software Factory pipeline. Zero dependencies.
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   LANES,
   STAGES,
   appendLedger,
   changedFiles,
+  git,
   isRisky,
   listFeatures,
   loadConfig,
@@ -79,6 +80,22 @@ function blockers(root, config, feature, stage, lane = 'full') {
   return CHECKS[stage]({ root, config, feature, dir, lane });
 }
 
+const IMPLEMENTER_RULES = `You are an implementer in a software factory. Follow these standing rules exactly:
+
+1. Edit only the files listed in \`allowed_files\`. Creating or changing any other file fails the run.
+2. Do not run shell commands. Do not install packages. If a dependency is missing, say so in your report.
+3. Do not commit, branch, or touch git.
+4. Read the existing code named in Context before writing. Imitate its patterns. Never invent an
+   API: if a function you need does not exist, say so instead of calling it.
+5. Do not read or write .env files or credentials.
+6. Finish with the report described in the brief's Report section. A run without a report counts as failed.
+
+The brief follows.
+
+---
+
+`;
+
 // ---------------------------------------------------------------------------- commands
 
 const commands = {
@@ -99,6 +116,7 @@ Briefs and scope
   brief check <file...>           Validate brief frontmatter and required sections
   scope <brief> [--base REF]      Fail if the diff touches files outside allowed_files
   risk [--base REF]               List changed files that match riskyPaths
+  delegate <brief> [--only name]  Send a brief to the implementer lanes in order; quota falls through
 
 Gates and ledger
   gates [--only name]             Run every configured gate; stamp the tree when all pass
@@ -260,6 +278,74 @@ Setup
     if (s.valid) return out('gates: green for the current tree');
     err(`gates: ${s.reason}`);
     process.exitCode = 1;
+  },
+
+  // Dispatch one brief to the implementers in factory.config.json, in order, until one completes.
+  // Adapter contract: args --prompt FILE --out DIR [--model M], cwd = repo root, writes
+  // DIR/report.md and DIR/log.txt; exit 0 completed, 75 quota (try the next lane), else failed.
+  // .sh adapters run under bash, .mjs/.js under node, anything else is executed directly.
+  delegate([file], flags) {
+    if (!file) die('usage: factory delegate <brief.md> [--only <implementer>]');
+    const { root, config } = ctx();
+    const briefPath = resolve(file);
+    const r = validateBrief(readFileSync(briefPath, 'utf8'));
+    if (!r.data) {
+      for (const e of r.errors) err(`  ${e}`);
+      die('brief is invalid; fix it with `factory brief check`');
+    }
+    const feature = basename(dirname(dirname(briefPath)));
+    const id = String(r.data.id);
+    const ledgerFile = config.ledger ?? 'factory/ledger.jsonl';
+    const dirty = git(['status', '--porcelain', '--', '.', `:!${config.stateDir}`, `:!${ledgerFile}`], root).trim();
+    if (dirty) die("working tree is not clean. Commit or stash first so the implementer's diff is reviewable on its own.");
+
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+    const runDir = join(root, config.stateDir, 'runs', feature, `${id}-${stamp}`);
+    mkdirSync(runDir, { recursive: true });
+    const prompt = join(runDir, 'prompt.md');
+    writeFileSync(prompt, IMPLEMENTER_RULES + readFileSync(briefPath, 'utf8'));
+
+    const lanes = (config.implementers ?? []).filter((i) => !flags.only || i.name === flags.only);
+    if (!lanes.length) die(flags.only ? `no implementer named "${flags.only}"` : 'no implementers configured');
+    const record = (lane, outcome, minutes, note) =>
+      appendLedger(root, config, { feature, brief: id, implementer: lane.name, model: lane.model, outcome, minutes, note });
+
+    for (const lane of lanes) {
+      const outDir = join(runDir, lane.name);
+      mkdirSync(outDir, { recursive: true });
+      out(`delegate: ${id} -> ${lane.name}${lane.model ? ` (${lane.model})` : ''}`);
+      const adapter = join(root, lane.adapter);
+      const args = ['--prompt', prompt, '--out', outDir, ...(lane.model ? ['--model', lane.model] : [])];
+      const [bin, argv] = /\.sh$/.test(adapter) ? ['bash', [adapter, ...args]] : /\.m?js$/.test(adapter) ? [process.execPath, [adapter, ...args]] : [adapter, args];
+      const start = Date.now();
+      const run = spawnSync(bin, argv, { cwd: root, stdio: 'inherit' });
+      const code = run.error ? 127 : (run.status ?? 1);
+      const minutes = Math.ceil((Date.now() - start) / 60000);
+      const report = join(outDir, 'report.md');
+      const hasReport = existsSync(report) && readFileSync(report, 'utf8').trim().length > 0;
+
+      if (code === 75) {
+        // Discard partial edits first, then record the attempt, so the rollback cannot erase the row.
+        spawnSync('git', ['checkout', '--', '.'], { cwd: root, stdio: 'ignore' });
+        spawnSync('git', ['clean', '-fdq', '--', '.'], { cwd: root, stdio: 'ignore' });
+        record(lane, 'quota', minutes);
+        out(`delegate: ${lane.name} is out of quota; falling through to the next implementer`);
+        continue;
+      }
+      if (code !== 0 || !hasReport) {
+        record(lane, 'failed', minutes, run.error ? `spawn: ${run.error.message}` : `exit ${code}`);
+        die(`${lane.name} failed (exit ${code}, report ${hasReport ? 'present' : 'missing'}). Log: ${join(outDir, 'log.txt')}`);
+      }
+
+      out(`\n== implementer report (${report})`);
+      out(readFileSync(report, 'utf8').trimEnd());
+      out('\n== scope');
+      commands.scope([briefPath], {});
+      out('\nNext: read the full diff (git diff; git status), fix or revert, then record the outcome:');
+      out(`  factory ledger add --feature ${feature} --brief ${id} --implementer ${lane.name}${lane.model ? ` --model ${lane.model}` : ''} --minutes ${minutes} --outcome accepted|rejected [--findings N]`);
+      return;
+    }
+    die(`no implementer completed ${id}`);
   },
 
   ledger([sub], flags) {

@@ -7,7 +7,7 @@ The factory records every implementer run in an append-only ledger, committed wi
 {"at":"2026-11-02T10:21:40Z","feature":"004-refunds","brief":"B003","implementer":"claude-headless","model":"claude-sonnet-5-5","outcome":"accepted","minutes":7,"cost_usd":0.21,"review_findings":2}
 ```
 
-`delegate.sh` writes `quota` and `failed` rows. The orchestrator writes `accepted` or `rejected`
+`factory delegate` writes `quota` and `failed` rows. The orchestrator writes `accepted` or `rejected`
 after reading the diff:
 
 ```bash

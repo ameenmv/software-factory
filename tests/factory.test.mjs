@@ -307,6 +307,38 @@ describe('delegate', () => {
     assert.equal(r.status, 1);
     assert.match(r.stderr, /not clean/);
   });
+
+  test('runs a node adapter through the CLI without bash, and records failures', () => {
+    sh('git', ['checkout', '-q', '--', '.']);
+    const adapters = join(repo, 'scripts/factory/adapters');
+    writeFileSync(join(adapters, 'node-ok.mjs'), `import { writeFileSync } from 'node:fs';
+const out = process.argv[process.argv.indexOf('--out') + 1];
+writeFileSync('src/index.js', 'export const greet = (n) => "hello " + n;\\n');
+writeFileSync(out + '/report.md', 'changed src/index.js\\n');
+`);
+    writeFileSync(join(adapters, 'node-broken.mjs'), 'process.exit(4);\n');
+    const cfg = join(repo, 'factory.config.json');
+    const config = JSON.parse(readFileSync(cfg, 'utf8'));
+    config.implementers = [
+      { name: 'node-broken', adapter: 'scripts/factory/adapters/node-broken.mjs' },
+      { name: 'node-ok', adapter: 'scripts/factory/adapters/node-ok.mjs' },
+    ];
+    writeFileSync(cfg, JSON.stringify(config));
+    sh('git', ['add', '-A']);
+    sh('git', ['commit', '-qm', 'node adapters', '--no-verify']);
+
+    const brief = 'specs/001-greet/briefs/b1.md';
+    const failed = factory('delegate', brief);
+    assert.equal(failed.status, 1);
+    assert.match(failed.stderr, /node-broken failed \(exit 4, report missing\)/);
+    const ledger = readFileSync(join(repo, 'factory/ledger.jsonl'), 'utf8');
+    assert.match(ledger, /"implementer":"node-broken".*"outcome":"failed"/);
+
+    const ok = factory('delegate', brief, '--only', 'node-ok');
+    assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+    assert.match(ok.stdout, /changed src\/index\.js/);
+    assert.match(ok.stdout, /scope: ok/);
+  });
 });
 
 describe('quick lane', () => {

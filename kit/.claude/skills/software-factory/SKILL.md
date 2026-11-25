@@ -23,7 +23,7 @@ The CLI is `node factory/cli/bin/factory.mjs` (below: `factory`). State lives in
 | 5 | tasks | `/speckit-tasks`; checklist of slices | `tasks.md` with `- [ ]` items |
 | 6 | analyze | `/speckit-analyze` across spec, plan and tasks | `analysis.md`, `CRITICAL: 0` |
 | 7 | brief | `brief-writer` subagent, one brief per slice | every `briefs/*.md` passes `factory brief check` |
-| 8 | implement | `scripts/factory/delegate.sh` per brief | an `accepted` ledger row per brief |
+| 8 | implement | `factory delegate` per brief | an `accepted` ledger row per brief |
 | 9 | gates | `factory gates` | stamp matches the current tree |
 | 10 | review | `reviewer`, plus `security-auditor` when risky | no unchecked `- [ ]` in `review.md` |
 | 11 | verify | `verifier` subagent or browser yourself | `verify.md` with `Evidence:` lines |
@@ -38,11 +38,11 @@ An override is allowed; a silent skip is not.
 
 ```bash
 factory brief check specs/<f>/briefs/<id>.md
-scripts/factory/delegate.sh specs/<f>/briefs/<id>.md      # tries implementers in config order
+factory delegate specs/<f>/briefs/<id>.md      # tries implementers in config order
 factory scope specs/<f>/briefs/<id>.md                    # exit 2 = touched files outside the brief
 ```
 
-`delegate.sh` falls through to the next implementer on exit 75 (quota or rate limit) and records
+`factory delegate` falls through to the next implementer on exit 75 (quota or rate limit) and records
 every attempt in the ledger. It never commits. After it returns:
 
 1. Read the whole diff yourself. Do not trust the implementer's report; it describes intent, not result.

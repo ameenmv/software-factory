@@ -9,8 +9,8 @@ flowchart TB
   H((Human)) -- approves spec, answers questions, ships --> O
   O[Orchestrator<br/>Claude, full tools] -- plan --> AR[architect<br/>read-only]
   O -- briefs --> BW[brief-writer<br/>writes briefs only]
-  O -- delegate.sh --> I1[Implementer lane 1<br/>edit-only, no shell]
-  O -- delegate.sh --> I2[Implementer lane 2<br/>edit-only, no shell]
+  O -- factory delegate --> I1[Implementer lane 1<br/>edit-only, no shell]
+  O -- factory delegate --> I2[Implementer lane 2<br/>edit-only, no shell]
   O -- tests --> TA[test-author<br/>test files only]
   O -- review --> RV[reviewer<br/>read-only]
   O -- risky diff --> SA[security-auditor<br/>read-only]

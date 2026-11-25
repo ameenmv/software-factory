@@ -20,7 +20,7 @@ Format: **Symptom**, **Cause**, **Fix now**, **Prevent**.
 - **Symptom**: `factory scope` exits 2; the diff "also" refactors a shared helper or reformats unrelated files.
 - **Cause**: the implementer saw something it wanted to improve.
 - **Fix now**: revert the extra files. Keep nothing that was not briefed, however good.
-- **Prevent**: the standing rule in every prompt, the scope check in `delegate.sh`, and tight `allowed_files`.
+- **Prevent**: the standing rule in every prompt, the scope check in `factory delegate`, and tight `allowed_files`.
 
 ### F03. Silent stop
 - **Symptom**: the run exits 0, but there is no report and the edit is half done.
@@ -31,7 +31,7 @@ Format: **Symptom**, **Cause**, **Fix now**, **Prevent**.
 ### F04. Quota exhausted mid-feature
 - **Symptom**: rate limit or 429 errors partway through a run of briefs.
 - **Cause**: free or subscription quota.
-- **Fix now**: nothing; `delegate.sh` falls through to the next lane on exit 75.
+- **Fix now**: nothing; `factory delegate` falls through to the next lane on exit 75.
 - **Prevent**: at least two lanes in config. Watch the quota column in `factory report`.
 
 ### F05. Duplicated helper

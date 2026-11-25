@@ -91,9 +91,13 @@ Lanes are listed in order in `factory.config.json`:
 ]
 ```
 
-`delegate.sh` walks the lanes. On exit 75 it discards the partial edit, records a `quota` row
+`factory delegate` walks the lanes. On exit 75 it discards the partial edit, records a `quota` row
 in the ledger and tries the next lane. This is how the factory keeps working when a free tier
 runs out halfway through a feature.
+
+Adapters can be written in any language. `factory delegate` runs `.sh` adapters with `bash`,
+`.mjs` and `.js` adapters with `node`, and executes anything else directly. On Windows without
+Git Bash, write the adapter as `.mjs` and the whole lane runs on Node alone.
 
 ### Sandboxing is the adapter's job
 
@@ -113,7 +117,7 @@ adapter must make them true:
 ```mermaid
 sequenceDiagram
   participant O as Orchestrator
-  participant D as delegate.sh
+  participant D as factory delegate
   participant I as Implementer
   participant L as Ledger
   O->>D: brief B003
@@ -146,7 +150,7 @@ each implementer's diff is reviewable alone:
 
 ```bash
 git worktree add ../repo-B004 -b feat/refunds-B004
-(cd ../repo-B004 && scripts/factory/delegate.sh specs/004-refunds/briefs/B004.md)
+(cd ../repo-B004 && factory delegate specs/004-refunds/briefs/B004.md)
 ```
 
 Merge the worktree branches back one at a time, re-running the gates after each.
