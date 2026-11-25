@@ -1,6 +1,6 @@
 // End-to-end tests: install the kit into a throwaway repo and drive the CLI and hooks for real.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { after, before, describe, test } from 'node:test';
@@ -338,6 +338,50 @@ writeFileSync(out + '/report.md', 'changed src/index.js\\n');
     assert.equal(ok.status, 0, ok.stdout + ok.stderr);
     assert.match(ok.stdout, /changed src\/index\.js/);
     assert.match(ok.stdout, /scope: ok/);
+  });
+});
+
+describe('plugin', () => {
+  test('manifests point at files that exist and cover every agent and hook', () => {
+    const plugin = JSON.parse(readFileSync(join(PKG, '.claude-plugin/plugin.json'), 'utf8'));
+    const market = JSON.parse(readFileSync(join(PKG, '.claude-plugin/marketplace.json'), 'utf8'));
+    assert.equal(plugin.name, 'software-factory');
+    assert.equal(plugin.version, JSON.parse(readFileSync(join(PKG, 'package.json'), 'utf8')).version);
+    assert.deepEqual(market.plugins.map((p) => [p.name, p.source]), [['software-factory', './']]);
+    assert.ok(existsSync(join(PKG, plugin.skills, 'software-factory/SKILL.md')));
+    const agents = readdirSync(join(PKG, 'kit/.claude/agents')).filter((f) => f.endsWith('.md')).map((f) => `./kit/.claude/agents/${f}`);
+    assert.deepEqual([...plugin.agents].sort(), agents.sort());
+    // hooks/hooks.json must wire the same hook scripts as the kit's settings.json.
+    const hooks = readFileSync(join(PKG, 'hooks/hooks.json'), 'utf8');
+    const kit = readFileSync(join(PKG, 'kit/.claude/settings.json'), 'utf8');
+    const scripts = (t) => [...t.matchAll(/hooks\/([\w-]+\.mjs)/g)].map((m) => m[1]).sort();
+    assert.deepEqual(scripts(hooks), scripts(kit));
+    for (const s of scripts(hooks)) assert.ok(existsSync(join(PKG, 'kit/.claude/hooks', s)), s);
+    assert.ok(!hooks.includes('CLAUDE_PROJECT_DIR'));
+  });
+
+  test('init --plugin installs the CLI and config but not hooks, agents or skills', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'factory-plugin-'));
+    execFileSync('git', ['init', '-q'], { cwd: dir });
+    const r = spawnSync('node', [join(PKG, 'bin/factory.mjs'), 'init', dir, '--plugin'], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /claude plugin install software-factory@software-factory --scope project/);
+    for (const f of ['factory/cli/bin/factory.mjs', 'scripts/factory/delegate.sh', 'factory.config.json']) assert.ok(existsSync(join(dir, f)), f);
+    for (const f of ['.claude/hooks', '.claude/agents', '.claude/skills']) assert.ok(!existsSync(join(dir, f)), f);
+    const settings = JSON.parse(readFileSync(join(dir, '.claude/settings.json'), 'utf8'));
+    assert.equal(settings.hooks, undefined);
+    assert.equal(settings.enabledPlugins['software-factory@software-factory'], true);
+    assert.equal(settings.extraKnownMarketplaces['software-factory'].source.repo, 'ameenmv/software-factory');
+    assert.ok(settings.permissions.deny.includes('Read(./.env)'));
+    const doctor = spawnSync('node', [join(dir, 'factory/cli/bin/factory.mjs'), 'doctor'], { cwd: dir, encoding: 'utf8' });
+    assert.match(doctor.stdout, /ok {3}plugin software-factory@software-factory enabled/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('init --plugin refuses a repo that already wires the hooks', () => {
+    const r = spawnSync('node', [join(PKG, 'bin/factory.mjs'), 'init', repo, '--plugin'], { encoding: 'utf8' });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /run twice/);
   });
 });
 

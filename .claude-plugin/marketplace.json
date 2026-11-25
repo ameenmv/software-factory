@@ -1,0 +1,12 @@
+{
+  "name": "software-factory",
+  "owner": { "name": "ameenmv", "url": "https://github.com/ameenmv" },
+  "metadata": { "description": "The Software Factory pipeline for Claude Code." },
+  "plugins": [
+    {
+      "name": "software-factory",
+      "source": "./",
+      "description": "Pipeline skill, role subagents and enforcement hooks. Pair with `factory init --plugin` in each repository."
+    }
+  ]
+}

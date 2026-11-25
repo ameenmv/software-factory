@@ -1,0 +1,31 @@
+{
+  "description": "Software Factory guards: secrets, git safety, the gate stamp, and pipeline state at session start",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/kit/.claude/hooks/session-context.mjs\"" }]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/kit/.claude/hooks/guard-bash.mjs\"" }]
+      },
+      {
+        "matcher": "Read|Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/kit/.claude/hooks/guard-files.mjs\"" }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/kit/.claude/hooks/post-edit.mjs\"" }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/kit/.claude/hooks/stop-gates.mjs\"" }]
+      }
+    ]
+  }
+}

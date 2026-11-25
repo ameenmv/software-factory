@@ -1,0 +1,28 @@
+{
+  "name": "software-factory",
+  "version": "1.1.0",
+  "description": "Claude as orchestrator, cheaper models as implementers: the pipeline skill, role subagents, and hooks that enforce gates, scope and secret rules.",
+  "author": {
+    "name": "ameenmv",
+    "url": "https://github.com/ameenmv"
+  },
+  "homepage": "https://github.com/ameenmv/software-factory",
+  "repository": "https://github.com/ameenmv/software-factory",
+  "license": "MIT",
+  "keywords": [
+    "orchestration",
+    "delegation",
+    "quality-gates",
+    "hooks",
+    "workflow"
+  ],
+  "skills": "./kit/.claude/skills/",
+  "agents": [
+    "./kit/.claude/agents/architect.md",
+    "./kit/.claude/agents/brief-writer.md",
+    "./kit/.claude/agents/reviewer.md",
+    "./kit/.claude/agents/security-auditor.md",
+    "./kit/.claude/agents/test-author.md",
+    "./kit/.claude/agents/verifier.md"
+  ]
+}

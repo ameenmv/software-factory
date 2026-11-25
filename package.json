@@ -1,12 +1,12 @@
 {
   "name": "software-factory",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A reference pipeline for building software with Claude as the orchestrator and cheaper models as implementers, enforced by hooks, gates and a ledger.",
   "type": "module",
   "license": "MIT",
   "bin": { "factory": "bin/factory.mjs" },
   "engines": { "node": ">=20" },
-  "files": ["bin", "lib", "kit", "templates", "docs/12-failure-catalog.md"],
+  "files": ["bin", "lib", "kit", "templates", "hooks", ".claude-plugin", "docs/12-failure-catalog.md"],
   "scripts": {
     "test": "node --test tests/*.test.mjs"
   }

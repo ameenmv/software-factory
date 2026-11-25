@@ -6,13 +6,33 @@ matter are enforced by hooks instead of requested in prompts, and every implemen
 scored in a ledger.
 
 It ships as documentation **and** a working kit: a zero-dependency CLI, Claude Code hooks,
-role subagents, an orchestrator skill, implementer adapters, and templates. One command
-installs it into any repository.
+role subagents, an orchestrator skill, implementer adapters, and templates.
+
+### Install as a Claude Code plugin (recommended)
+
+The plugin brings the skill, the subagents and the hooks, and it updates with each release.
+Your repository keeps the CLI and its config, so CI and the gates work without the plugin.
 
 ```bash
+claude plugin marketplace add ameenmv/software-factory
+claude plugin install software-factory@software-factory --scope project
+
 git clone https://github.com/ameenmv/software-factory.git
+node software-factory/bin/factory.mjs init /path/to/your/repo --plugin
+```
+
+`init --plugin` also writes the `.env` deny list to `.claude/settings.json`, because plugins
+cannot ship permissions. It registers the plugin there as well, so teammates see it. Each
+teammate still runs the `claude plugin install` line once per clone.
+
+### Or vendor everything into the repository
+
+```bash
 node software-factory/bin/factory.mjs init /path/to/your/repo
 ```
+
+This copies the hooks, agents and skill into `.claude/`. Choose one mode. `init --plugin`
+refuses to run in a repo that already has the vendored hooks, so they never run twice.
 
 ---
 

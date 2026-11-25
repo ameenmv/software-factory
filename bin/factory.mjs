@@ -127,6 +127,8 @@ Gates and ledger
 
 Setup
   init [dir] [--force]            Install the factory kit into a repository
+        --plugin                  Use the Claude Code plugin for hooks, agents and skills;
+                                  install only the CLI, config, templates and deny list
   doctor                          Check that the kit is installed and wired`);
   },
 
@@ -394,9 +396,11 @@ Setup
       cpSync(from, dest, { recursive: true });
       out(`add   ${to}`);
     };
-    for (const d of ['.claude/hooks', '.claude/agents', '.claude/skills/software-factory', 'scripts/factory']) {
-      copy(join(kit, d === 'scripts/factory' ? 'scripts' : d), d);
-    }
+    const plugin = Boolean(flags.plugin);
+    if (plugin && hasHooks(target))
+      die('this repo already has the factory hooks in .claude/settings.json; remove them before switching to the plugin, or they run twice');
+    const kitDirs = plugin ? ['scripts/factory'] : ['.claude/hooks', '.claude/agents', '.claude/skills/software-factory', 'scripts/factory'];
+    for (const d of kitDirs) copy(join(kit, d === 'scripts/factory' ? 'scripts' : d), d);
     copy(join(PKG, 'bin'), 'factory/cli/bin');
     copy(join(PKG, 'lib'), 'factory/cli/lib');
     copy(join(PKG, 'templates'), 'factory/templates');
@@ -405,7 +409,8 @@ Setup
       if (!existsSync(join(target, f))) copy(join(PKG, 'templates', 'project', f), f);
       else out(`skip  ${f} (exists; merge templates/project/${f} by hand)`);
     }
-    mergeSettings(target);
+    if (plugin) pluginSettings(target);
+    else mergeSettings(target);
     if (!existsSync(join(target, 'factory.config.json'))) {
       writeFileSync(join(target, 'factory.config.json'), JSON.stringify(detectConfig(target), null, 2) + '\n');
       out('add   factory.config.json (review the detected gates)');
@@ -422,6 +427,8 @@ Setup
       appendFileSync(ga, (attrs && !attrs.endsWith('\n') ? '\n' : '') + 'factory/ledger.jsonl merge=union\n');
       out('edit  .gitattributes (+ ledger merge=union)');
     }
+    if (plugin)
+      out(`\nEach person who clones this repo installs the plugin once:\n  claude plugin marketplace add ameenmv/software-factory\n  claude plugin install ${PLUGIN_ID} --scope project`);
     out('\nNext: edit factory.config.json, fill AGENTS.md, then `node factory/cli/bin/factory.mjs doctor`.');
   },
 
@@ -431,7 +438,10 @@ Setup
       ['node >= 20', Number(process.versions.node.split('.')[0]) >= 20],
       ['factory.config.json present', !config._missing],
       ['at least one gate configured', config.gates.length > 0],
-      ['.claude/settings.json has factory hooks', hasHooks(root)],
+      [
+        hasPlugin(root) ? `plugin ${PLUGIN_ID} enabled (hooks come from the plugin)` : '.claude/settings.json has factory hooks',
+        hasPlugin(root) !== hasHooks(root),
+      ],
       ['AGENTS.md present', existsSync(join(root, 'AGENTS.md'))],
       ['.factory/ is git-ignored', existsSync(join(root, '.gitignore')) && /^\.factory\/?$/m.test(readFileSync(join(root, '.gitignore'), 'utf8'))],
       ['at least one implementer configured', config.implementers.length > 0],
@@ -455,6 +465,35 @@ function templatesDir(root) {
 function hasHooks(root) {
   const f = join(root, '.claude', 'settings.json');
   return existsSync(f) && readFileSync(f, 'utf8').includes('.claude/hooks/guard-bash.mjs');
+}
+
+const PLUGIN_ID = 'software-factory@software-factory';
+
+// Plugin mode: the plugin brings hooks, agents and skills. The project gets the secret deny list
+// (plugins cannot ship permissions) and asks teammates to install the plugin when they trust the repo.
+function pluginSettings(target) {
+  const file = join(target, '.claude', 'settings.json');
+  const ours = JSON.parse(readFileSync(join(PKG, 'kit', '.claude', 'settings.json'), 'utf8'));
+  const theirs = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {};
+  theirs.permissions ??= {};
+  theirs.permissions.deny = [...new Set([...(theirs.permissions.deny ?? []), ...(ours.permissions?.deny ?? [])])];
+  theirs.extraKnownMarketplaces ??= {};
+  theirs.extraKnownMarketplaces['software-factory'] ??= { source: { source: 'github', repo: 'ameenmv/software-factory' } };
+  theirs.enabledPlugins ??= {};
+  theirs.enabledPlugins[PLUGIN_ID] ??= true;
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify(theirs, null, 2) + '\n');
+  out(`${existsSync(file) ? 'edit ' : 'add  '} .claude/settings.json (deny list + ${PLUGIN_ID})`);
+}
+
+function hasPlugin(root) {
+  const f = join(root, '.claude', 'settings.json');
+  if (!existsSync(f)) return false;
+  try {
+    return JSON.parse(readFileSync(f, 'utf8')).enabledPlugins?.[PLUGIN_ID] === true;
+  } catch {
+    return false;
+  }
 }
 
 function mergeSettings(target) {
