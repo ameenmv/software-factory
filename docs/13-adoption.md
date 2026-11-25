@@ -20,7 +20,7 @@ your-repo/
     skills/software-factory/      the orchestrator procedure
   scripts/factory/
     delegate.sh                   wrapper for `factory delegate`
-    review.sh                     free first-pass review
+    review.sh                     wrapper for `factory review`
     adapters/                     opencode.sh, claude.sh, _template.sh
   factory/
     cli/                          the CLI, vendored (no npm install)

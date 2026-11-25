@@ -119,6 +119,7 @@ Briefs and scope
   risk [--base REF]               List changed files that match riskyPaths
   delegate <brief> [--only name]  Send a brief to the implementer lanes in order; quota falls through
   handbook <brief>                Show which handbook parts delegate injects for this brief
+  review <feature> [--base REF]   Free read-only first pass; findings go to review.md unchecked
 
 Evals
   eval [dir] [--only name] [--case name] [--repeat N] [--handbook off] [--min-pass 0.8] [--keep]
@@ -457,6 +458,83 @@ Setup
     }
   },
 
+  // First-pass review by a cheap model, read-only. Findings are appended to review.md as unchecked
+  // UNVERIFIED items, so the review stage cannot be left until the orchestrator triages each one.
+  // The reviewer lane is config.reviewer ({ adapter, model }); the default is OpenCode with its
+  // read-only permission set. Every reviewer adapter gets FACTORY_READONLY=1 and must honour it.
+  review([id], flags) {
+    if (!id) die('usage: factory review <feature> [--base REF]');
+    const { root, config } = ctx();
+    const feature = resolveFeature(root, config, id);
+    const base = flags.base ? String(flags.base) : 'HEAD';
+    const maxBytes = Number(config.reviewMaxBytes ?? 150000);
+    const excludes = [':!*.lock', ':!*-lock.yaml', ':!*-lock.json', `:!${config.stateDir}`];
+    let diff = git(['diff', base, '--', '.', ...excludes], root);
+    const untracked = git(['ls-files', '--others', '--exclude-standard'], root)
+      .split('\n')
+      .filter((f) => f && !f.startsWith(config.stateDir + '/'));
+    if (!diff.trim() && !untracked.length) return out(`review: nothing to review against ${base}`);
+    const truncated = Buffer.byteLength(diff) > maxBytes;
+    if (truncated) diff = Buffer.from(diff).subarray(0, maxBytes).toString('utf8');
+
+    // The reviewer judges against the same conventions the implementer was given.
+    const handbook = selectHandbook(root, config, changedFiles(root, base));
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+    const outDir = join(root, config.stateDir, `review-${stamp}`);
+    mkdirSync(outDir, { recursive: true });
+    const prompt = join(outDir, 'prompt.md');
+    writeFileSync(
+      prompt,
+      `You are a strict senior reviewer. Do not edit anything; only report.
+Read AGENTS.md and any engineering handbook it points to, then the briefs in ${config.specsDir}/${feature}/briefs/.
+Review the diff below against them. Open changed files for context when the diff is not enough.
+
+Report only real problems, most severe first, one per line, in exactly this format:
+- [ ] UNVERIFIED <high|medium|low>  <file>:<line>  <what is wrong and a concrete failure>.  Fix: <one sentence>.
+
+Look for: correctness bugs, files outside the brief's allowed_files, invented APIs, missing tests for
+new behaviour, security issues, secrets, dead code. Skip style nits and anything you are unsure of.
+If there is nothing real, print exactly: No findings.
+
+${renderHandbook(handbook)}Untracked files to read as well:
+${untracked.length ? untracked.join('\n') : 'none'}
+
+## Diff against ${base}${truncated ? ` (truncated at ${maxBytes} bytes: open the remaining changed files yourself)` : ''}
+\`\`\`diff
+${diff}
+\`\`\`
+`,
+    );
+
+    const lane = {
+      name: 'reviewer',
+      adapter: config.reviewer?.adapter ?? 'scripts/factory/adapters/opencode.sh',
+      model: process.env.REVIEW_MODEL || config.reviewer?.model,
+    };
+    const run = runAdapter(root, lane, prompt, outDir, { OPENCODE_PERMISSIONS: 'readonly', FACTORY_READONLY: '1' });
+    if (run.code !== 0 || !run.hasReport) {
+      // A missing free pass is not a blocker; the reviewer subagent is the real review.
+      err(`review: free review unavailable (exit ${run.code}${run.hasReport ? '' : ', no report'}); continue with the reviewer subagent`);
+      return;
+    }
+
+    const findings = readFileSync(run.report, 'utf8')
+      .split(/\r?\n/)
+      .filter((l) => /^- \[ \] UNVERIFIED/.test(l));
+    const reviewFile = join(root, config.specsDir, feature, 'review.md');
+    const existing = existsSync(reviewFile) ? readFileSync(reviewFile, 'utf8') : '';
+    const block = [
+      ...(existing.trim() ? [] : [`# Review: ${feature}`]),
+      '',
+      `## Free first pass (${new Date().toISOString().slice(0, 10)}, unverified)`,
+      '',
+      ...(findings.length ? findings : ['No findings. (Not proof: run the reviewer subagent.)']),
+      '',
+    ];
+    appendFileSync(reviewFile, (existing && !existing.endsWith('\n') ? '\n' : '') + block.join('\n'));
+    out(`review: ${findings.length} finding(s) appended to ${config.specsDir}/${feature}/review.md`);
+  },
+
   handbook([file]) {
     if (!file) die('usage: factory handbook <brief.md>');
     const { root, config } = ctx();
@@ -706,12 +784,12 @@ function buildPrompt(handbook, briefText) {
 }
 
 // Run one adapter. cwd is the tree the implementer edits: the repo root, or an eval worktree.
-function runAdapter(cwd, lane, prompt, outDir) {
+function runAdapter(cwd, lane, prompt, outDir, env) {
   const adapter = join(cwd, lane.adapter);
   const args = ['--prompt', prompt, '--out', outDir, ...(lane.model ? ['--model', lane.model] : [])];
   const [bin, argv] = /\.sh$/.test(adapter) ? ['bash', [adapter, ...args]] : /\.m?js$/.test(adapter) ? [process.execPath, [adapter, ...args]] : [adapter, args];
   const start = Date.now();
-  const run = spawnSync(bin, argv, { cwd, stdio: 'inherit' });
+  const run = spawnSync(bin, argv, { cwd, stdio: 'inherit', env: env ? { ...process.env, ...env } : process.env });
   const report = join(outDir, 'report.md');
   return {
     code: run.error ? 127 : (run.status ?? 1),

@@ -16,12 +16,19 @@ done
 [ -f "$prompt" ] && [ -n "$out" ] || { echo "claude.sh: --prompt FILE --out DIR required" >&2; exit 2; }
 command -v claude >/dev/null || { echo "claude.sh: claude is not installed" >&2; exit 127; }
 
+# FACTORY_READONLY=1 (set by `factory review`): read and report only, no edits.
+if [ "${FACTORY_READONLY:-}" = "1" ]; then
+  allowed="Read Glob Grep" denied="Edit Write NotebookEdit Bash WebFetch WebSearch Task" mode="default"
+else
+  allowed="Read Edit Write Glob Grep" denied="Bash WebFetch WebSearch Task" mode="acceptEdits"
+fi
+
 set +e
 claude -p \
   --model "$model" \
-  --permission-mode acceptEdits \
-  --allowedTools "Read Edit Write Glob Grep" \
-  --disallowedTools "Bash WebFetch WebSearch Task" \
+  --permission-mode "$mode" \
+  --allowedTools "$allowed" \
+  --disallowedTools "$denied" \
   <"$prompt" >"$out/report.md" 2>"$out/log.txt"
 code=$?
 set -e

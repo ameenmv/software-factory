@@ -3,12 +3,15 @@
 # factory.config.json "implementers". The whole contract:
 #
 #   args:   --prompt FILE --out DIR [--model MODEL]
-#   cwd:    repository root (delegate.sh guarantees it)
+#   cwd:    the tree to edit: the repository root, or an eval worktree (`factory delegate`/`eval`)
+#   env:    FACTORY_READONLY=1 when used as the reviewer (`factory review`): allow no edits at all
 #   writes: DIR/report.md  the implementer's final message (required; empty means failed)
 #           DIR/log.txt    stderr and anything useful for debugging
 #   exit:   0   completed (the orchestrator still reviews the diff)
-#           75  quota, rate limit or temporary unavailability: delegate.sh tries the next lane
+#           75  quota, rate limit or temporary unavailability: the next lane is tried
 #           *   failed
+#
+# Adapters may also be .mjs or .js files (run with node), so a lane can work without bash.
 #
 # Sandboxing is the adapter's job. The implementer must not be able to run shell commands,
 # reach the network, read .env files or write outside the repository. If the CLI cannot enforce

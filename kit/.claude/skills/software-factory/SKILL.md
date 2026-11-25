@@ -53,7 +53,7 @@ every attempt in the ledger. It never commits. After it returns:
 
 ## Review rules
 
-- First pass: `scripts/factory/review.sh` (free model, read-only). Second: the `reviewer` subagent. Third, when `factory risk` exits 3 or the brief says `risk: high`: `security-auditor`.
+- First pass: `factory review <feature>` (free model, read-only). Second: the `reviewer` subagent. Third, when `factory risk` exits 3 or the brief says `risk: high`: `security-auditor`.
 - Every finding is a hypothesis. Open the code and reproduce the failure before acting. Close each line in `review.md`:
   `- [x] CONFIRMED ... -> fixed in <file>` or `- [x] REJECTED ... -> <why it is not a bug>`.
 - Fixes after review invalidate the gate stamp. Re-run `factory gates`.

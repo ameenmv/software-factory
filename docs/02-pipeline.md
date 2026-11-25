@@ -81,7 +81,7 @@ flowchart LR
 - **Exit**: the stamp is green and matches the current tree. Any later edit invalidates it.
 
 ### 10. review
-- **Owner**: layered. Free first pass (`scripts/factory/review.sh`), the `reviewer` subagent, and the `security-auditor` when risky. See [06-review.md](06-review.md).
+- **Owner**: layered. Free first pass (`factory review <feature>`), the `reviewer` subagent, and the `security-auditor` when risky. See [06-review.md](06-review.md).
 - **Output**: `review.md` as a checklist of findings, each closed as fixed or rejected with a reason.
 - **Exit**: no unchecked `- [ ]` lines.
 

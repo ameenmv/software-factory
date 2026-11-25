@@ -476,6 +476,68 @@ writeFileSync(arg('--out') + '/report.md', 'done\\n');
   });
 });
 
+describe('review', () => {
+  const setReviewer = (reviewer) => {
+    const cfg = join(repo, 'factory.config.json');
+    const config = JSON.parse(readFileSync(cfg, 'utf8'));
+    config.reviewer = reviewer;
+    writeFileSync(cfg, JSON.stringify(config));
+  };
+
+  before(() => {
+    const adapters = join(repo, 'scripts/factory/adapters');
+    // Fails loudly if it is not run read-only or not given the diff and the handbook.
+    writeFileSync(join(adapters, 'fake-reviewer.mjs'), `import { readFileSync, writeFileSync } from 'node:fs';
+const arg = (k) => process.argv[process.argv.indexOf(k) + 1];
+if (process.env.FACTORY_READONLY !== '1') process.exit(5);
+const p = readFileSync(arg('--prompt'), 'utf8');
+if (!p.includes('## Diff against HEAD') || !p.includes('reviewed-change') || !p.includes('Never log tokens')) process.exit(6);
+writeFileSync(arg('--out') + '/report.md', 'Thinking...\\n- [ ] UNVERIFIED high  src/index.js:1  greet is wrong.  Fix: return the name.\\nchatter\\n');
+`);
+    writeFileSync(join(adapters, 'dead-reviewer.mjs'), 'process.exit(3);\n');
+    setReviewer({ adapter: 'scripts/factory/adapters/fake-reviewer.mjs' });
+    sh('git', ['add', '-A']);
+    sh('git', ['commit', '-qm', 'reviewers', '--no-verify']);
+  });
+
+  test('says so when there is nothing to review', () => {
+    const r = factory('review', 'greet');
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /nothing to review against HEAD/);
+  });
+
+  test('appends only the finding lines to review.md, unchecked, so the stage blocks', () => {
+    writeFileSync(join(repo, 'src/index.js'), 'export const greet = () => "reviewed-change";\n');
+    const reviewFile = join(repo, 'specs/001-greet/review.md');
+    rmSync(reviewFile, { force: true });
+    const r = factory('review', 'greet');
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /1 finding\(s\) appended/);
+    const review = readFileSync(reviewFile, 'utf8');
+    assert.match(review, /^# Review: 001-greet/);
+    assert.match(review, /## Free first pass \(\d{4}-\d{2}-\d{2}, unverified\)\n\n- \[ \] UNVERIFIED high {2}src\/index\.js:1/);
+    assert.doesNotMatch(review, /Thinking|chatter/);
+    // A second pass appends a new section instead of a second title.
+    assert.equal(factory('review', 'greet').status, 0);
+    assert.equal(readFileSync(reviewFile, 'utf8').match(/^# Review/gm).length, 1);
+  });
+
+  test('the bash wrapper still takes a positional base ref', () => {
+    const r = spawnSync('bash', ['scripts/factory/review.sh', 'greet', 'HEAD'], { cwd: repo, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /finding\(s\) appended/);
+  });
+
+  test('an unavailable reviewer does not fail the command', () => {
+    setReviewer({ adapter: 'scripts/factory/adapters/dead-reviewer.mjs' });
+    const r = factory('review', 'greet');
+    assert.equal(r.status, 0);
+    assert.match(r.stderr, /free review unavailable \(exit 3, no report\)/);
+    sh('git', ['checkout', '-q', '--', '.']);
+    rmSync(join(repo, 'specs/001-greet/review.md'), { force: true });
+  });
+});
+
 describe('plugin', () => {
   test('manifests point at files that exist and cover every agent and hook', () => {
     const plugin = JSON.parse(readFileSync(join(PKG, '.claude-plugin/plugin.json'), 'utf8'));

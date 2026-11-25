@@ -17,10 +17,30 @@ flowchart LR
 | Layer | Cost | Good at | Blind to |
 |---|---|---|---|
 | `factory scope` | zero | files outside the brief | everything else |
-| `scripts/factory/review.sh` | free | obvious bugs, missing tests, a second opinion | project context, subtle logic; produces false positives |
+| `factory review <feature>` | free | obvious bugs, missing tests, a second opinion | project context, subtle logic; produces false positives |
 | `reviewer` subagent | moderate | contract vs code, invented APIs, project rules | attack thinking |
 | `security-auditor` | moderate | authz, injection, money, migrations | product behaviour |
 | `factory risk` | zero | deciding whether the auditor is needed | |
+
+### The free first pass
+
+`factory review <feature> [--base REF]` sends the diff to a cheap model and appends its findings
+to `review.md` as unchecked `UNVERIFIED` items, so the review stage cannot be left until each one
+is triaged. The reviewer gets the same handbook context an implementer would get for the changed
+files. Diffs over `reviewMaxBytes` (default 150000) are cut, and the reviewer is told to open the
+rest itself.
+
+The lane is `reviewer` in `factory.config.json`. The default is the OpenCode adapter with its
+read-only permission set. `REVIEW_MODEL` overrides the model for one run.
+
+```json
+"reviewer": { "adapter": "scripts/factory/adapters/opencode.sh", "model": "opencode/big-pickle" }
+```
+
+The reviewer adapter is called with `FACTORY_READONLY=1` (and `OPENCODE_PERMISSIONS=readonly`). An
+adapter used as a reviewer must switch to a no-edit permission set when it sees that variable. If
+the reviewer is unavailable, the command reports it and exits 0: the `reviewer` subagent is the
+real review.
 
 ## Every finding is a hypothesis
 

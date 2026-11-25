@@ -3,7 +3,8 @@
 # OPENCODE_CONFIG_CONTENT, the highest-precedence config source, so a project opencode.json
 # cannot loosen it. Shell, web, sub-agents, paths outside the repo, .env and .git are denied.
 #
-# OPENCODE_PERMISSIONS=readonly switches to the no-edit set (used by review.sh).
+# FACTORY_READONLY=1 (set by `factory review`) or OPENCODE_PERMISSIONS=readonly switches to the
+# no-edit set.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,7 +20,9 @@ done
 [ -f "$prompt" ] && [ -n "$out" ] || { echo "opencode.sh: --prompt FILE --out DIR required" >&2; exit 2; }
 command -v opencode >/dev/null || { echo "opencode.sh: opencode is not installed" >&2; exit 127; }
 
-perm_file="$here/opencode-permissions.${OPENCODE_PERMISSIONS:-edit}.json"
+perms="${OPENCODE_PERMISSIONS:-edit}"
+if [ "${FACTORY_READONLY:-}" = "1" ]; then perms="readonly"; fi
+perm_file="$here/opencode-permissions.${perms}.json"
 OPENCODE_CONFIG_CONTENT="$(cat "$perm_file")"
 export OPENCODE_CONFIG_CONTENT
 
