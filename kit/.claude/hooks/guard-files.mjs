@@ -22,14 +22,17 @@ function block(reason) {
   process.exit(2);
 }
 
-const base = target.split('/').pop() ?? '';
-if (/^\.env(\..+)?$/.test(base) && !/\.(example|sample|template)$/.test(base))
+// Split on both separators: on Windows the path arrives as C:\repo\.env, and splitting on "/"
+// alone would make the whole path the basename and let secrets through. Match case-insensitively
+// because Windows and macOS file systems are, so .ENV opens the same file as .env.
+const base = target.split(/[\\/]/).pop() ?? '';
+if (/^\.env(\..+)?$/i.test(base) && !/\.(example|sample|template)$/i.test(base))
   block(`${base} holds secrets and is off limits to agents. Use .env.example for structure.`);
-if (/\.(pem|key|p12|pfx)$/.test(base) || /^id_(rsa|ed25519)/.test(base)) block(`${base} looks like a private key.`);
+if (/\.(pem|key|p12|pfx)$/i.test(base) || /^id_(rsa|ed25519)/i.test(base)) block(`${base} looks like a private key.`);
 
 const isWrite = tool !== 'Read';
 const relPath = relative(root, target).split('\\').join('/');
-if (isWrite && relPath.startsWith('.git/')) block('the .git directory is managed by git, not by edits.');
+if (isWrite && /^\.git(\/|$)/i.test(relPath)) block('the .git directory is managed by git, not by edits.');
 
 if (isWrite && Array.isArray(config.lockedPaths) && config.lockedPaths.length) {
   const toRe = (g) =>
