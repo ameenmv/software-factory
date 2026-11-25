@@ -100,6 +100,29 @@ flowchart LR
 - **Output**: `retro.md`: numbers from `factory report`, what broke and where it should have been caught, concrete factory changes.
 - **Exit**: `retro.md` is non-empty. The feature becomes `done`.
 
+## The quick lane
+
+Small, low-risk changes (a bug fix, a copy change, a dependency bump) do not need a spec, a plan
+or Spec Kit. Start them in the quick lane:
+
+```bash
+factory feature new fix-date-format --lane quick
+```
+
+The quick lane runs six stages: `intake → brief → implement → gates → review → ship`. The
+exit criteria are the same as in the full lane, so the controls that prove the work stay on:
+validated briefs with `allowed_files`, an accepted run in the ledger, a green gate stamp on the
+current tree, and a review with no open findings.
+
+What it drops is the design work: `specify`, `clarify`, `plan`, `tasks`, `analyze`, `verify`
+and `retro`. To keep that safe, the `brief` stage refuses any brief whose `allowed_files` match
+`riskyPaths` (auth, payments, billing, migrations by default). Work that touches those paths
+belongs in the full lane. An override is possible but, like every override, it is recorded.
+
+The lane is stored in `state.json` and shown by `factory status` (`3/6 quick`). Use it when the
+intake fits in a paragraph; if you find yourself writing a spec in the brief, start over in the
+full lane.
+
 ## Overrides
 
 ```bash

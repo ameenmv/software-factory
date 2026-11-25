@@ -5,6 +5,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileS
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  LANES,
   STAGES,
   appendLedger,
   changedFiles,
@@ -16,6 +17,7 @@ import {
   scopeCheck,
   stampPath,
   stampStatus,
+  stagesFor,
   summarize,
   treeFingerprint,
   validateBrief,
@@ -72,9 +74,9 @@ function writeState(root, config, feature, state) {
   writeFileSync(join(root, config.specsDir, feature, 'state.json'), JSON.stringify(state, null, 2) + '\n');
 }
 
-function blockers(root, config, feature, stage) {
+function blockers(root, config, feature, stage, lane = 'full') {
   const dir = join(root, config.specsDir, feature);
-  return CHECKS[stage]({ root, config, feature, dir });
+  return CHECKS[stage]({ root, config, feature, dir, lane });
 }
 
 // ---------------------------------------------------------------------------- commands
@@ -85,6 +87,8 @@ const commands = {
 
 Pipeline
   feature new <slug>              Create specs/NNN-slug with state.json at stage "intake"
+        --lane full|quick         quick: intake, brief, implement, gates, review, ship
+                                  (no spec/design stages; risky paths are refused)
   status [feature]                Show every feature, its stage and what blocks it
   check [feature]                 List the exit-criteria failures of the current stage
   advance [feature]               Move to the next stage if the current one is satisfied
@@ -108,8 +112,10 @@ Setup
   doctor                          Check that the kit is installed and wired`);
   },
 
-  feature([sub, slug]) {
-    if (sub !== 'new' || !slug) die('usage: factory feature new <slug>');
+  feature([sub, slug], flags) {
+    if (sub !== 'new' || !slug) die('usage: factory feature new <slug> [--lane full|quick]');
+    const lane = flags.lane ? String(flags.lane) : 'full';
+    if (!LANES[lane]) die(`unknown lane "${lane}"; use one of: ${Object.keys(LANES).join(', ')}`);
     if (!/^[a-z0-9][a-z0-9-]*$/.test(slug)) die('slug must be kebab-case');
     const { root, config } = ctx();
     const existing = listFeatures(root, config);
@@ -118,10 +124,10 @@ Setup
     const dir = join(root, config.specsDir, name);
     mkdirSync(join(dir, 'briefs'), { recursive: true });
     const now = new Date().toISOString();
-    writeState(root, config, name, { feature: name, stage: 'intake', created: now, history: [{ stage: 'intake', at: now }] });
+    writeState(root, config, name, { feature: name, lane, stage: 'intake', created: now, history: [{ stage: 'intake', at: now }] });
     const tpl = join(templatesDir(root), 'intake.md');
     if (existsSync(tpl)) writeFileSync(join(dir, 'intake.md'), readFileSync(tpl, 'utf8').replaceAll('{{feature}}', name));
-    out(`created ${config.specsDir}/${name} at stage intake`);
+    out(`created ${config.specsDir}/${name} at stage intake (${lane} lane)`);
   },
 
   status([id]) {
@@ -130,9 +136,10 @@ Setup
     if (!list.length) return out('no features');
     for (const f of list) {
       const s = readState(root, config, f);
-      const b = s.stage === 'done' ? [] : blockers(root, config, f, s.stage);
-      const n = STAGES.indexOf(s.stage) + 1;
-      out(`${f.padEnd(32)} ${s.stage.padEnd(10)} ${s.stage === 'done' ? 'done' : `${n}/${STAGES.length}`}  ${b.length ? `${b.length} blocker(s)` : 'ready to advance'}`);
+      const b = s.stage === 'done' ? [] : blockers(root, config, f, s.stage, s.lane);
+      const stages = stagesFor(s);
+      const n = stages.indexOf(s.stage) + 1;
+      out(`${f.padEnd(32)} ${s.stage.padEnd(10)} ${s.stage === 'done' ? 'done' : `${n}/${stages.length}${s.lane === 'quick' ? ' quick' : ''}`}  ${b.length ? `${b.length} blocker(s)` : 'ready to advance'}`);
     }
   },
 
@@ -141,8 +148,8 @@ Setup
     const f = resolveFeature(root, config, id);
     const s = readState(root, config, f);
     if (s.stage === 'done') return out(`${f} is done`);
-    const b = blockers(root, config, f, s.stage);
-    out(`${f} @ ${s.stage}`);
+    const b = blockers(root, config, f, s.stage, s.lane);
+    out(`${f} @ ${s.stage}${s.lane === 'quick' ? ' (quick lane)' : ''}`);
     if (!b.length) return out('  ready to advance');
     for (const x of b) out(`  - ${x}`);
     process.exitCode = 1;
@@ -153,14 +160,15 @@ Setup
     const f = resolveFeature(root, config, id);
     const s = readState(root, config, f);
     if (s.stage === 'done') die(`${f} is already done`);
-    const b = blockers(root, config, f, s.stage);
+    const b = blockers(root, config, f, s.stage, s.lane);
     if (b.length && !flags.override) {
       err(`cannot leave "${s.stage}":`);
       for (const x of b) err(`  - ${x}`);
       die('fix the blockers, or pass --override "<reason>" to record a deliberate exception');
     }
     const prev = s.stage;
-    const next = STAGES[STAGES.indexOf(prev) + 1] ?? 'done';
+    const stages = stagesFor(s);
+    const next = stages[stages.indexOf(prev) + 1] ?? 'done';
     const entry = { stage: next, at: new Date().toISOString() };
     if (b.length) entry.override = { from: s.stage, reason: String(flags.override), blockers: b };
     s.stage = next;

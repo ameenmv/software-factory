@@ -250,6 +250,11 @@ describe('hooks', () => {
     assert.equal(f('Read', join(repo, 'src/generated/api.ts')), 0);
     assert.equal(f('Edit', join(repo, 'src/index.js')), 0);
     assert.equal(f('Read', join(repo, 'deploy/server.pem')), 2);
+    // Windows paths and case-insensitive file systems, checked on every platform.
+    assert.equal(f('Read', 'C:\\work\\app\\.env'), 2);
+    assert.equal(f('Read', 'C:\\work\\app\\.ENV.local'), 2);
+    assert.equal(f('Read', 'C:\\work\\app\\.env.example'), 0);
+    assert.equal(f('Read', 'C:\\keys\\Server.PEM'), 2);
   });
 
   test('stop hook sends the agent back once when code changed without gates', () => {
@@ -301,5 +306,35 @@ describe('delegate', () => {
     const r = spawnSync('bash', ['scripts/factory/delegate.sh', 'specs/001-greet/briefs/b1.md'], { cwd: repo, encoding: 'utf8' });
     assert.equal(r.status, 1);
     assert.match(r.stderr, /not clean/);
+  });
+});
+
+describe('quick lane', () => {
+  test('skips spec and design stages but keeps the proof stages', () => {
+    const r = factory('feature', 'new', 'typo-fix', '--lane', 'quick');
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /quick lane/);
+    const dir = join(repo, 'specs/002-typo-fix');
+    assert.equal(JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')).lane, 'quick');
+    assert.match(factory('advance', 'typo-fix').stdout, /intake -> brief/);
+    assert.match(factory('status', 'typo-fix').stdout, /2\/6 quick/);
+    writeFileSync(join(dir, 'briefs/q1.md'), goodBrief('q1', ['src/index.js']));
+    assert.match(factory('advance', 'typo-fix').stdout, /brief -> implement/);
+    assert.match(factory('advance', 'typo-fix').stderr, /q1 has no accepted run/);
+  });
+
+  test('refuses briefs that touch risky paths', () => {
+    assert.equal(factory('feature', 'new', 'login-tweak', '--lane', 'quick').status, 0);
+    assert.equal(factory('advance', 'login-tweak').status, 0);
+    writeFileSync(join(repo, 'specs/003-login-tweak/briefs/q1.md'), goodBrief('q1', ['src/auth/login.js']));
+    const r = factory('advance', 'login-tweak');
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /risky path; the quick lane cannot touch it/);
+  });
+
+  test('rejects an unknown lane', () => {
+    const r = factory('feature', 'new', 'x', '--lane', 'fast');
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /unknown lane "fast"/);
   });
 });

@@ -63,8 +63,9 @@ caught one stage earlier each time it happens, until it cannot happen.
   are back where you started.
 - **Not tied to an implementer.** Claude is the orchestrator by design. Implementers are adapters
   behind a five-line contract. Models change every few months; the pipeline should not.
-- **Not heavyweight for small work.** A one-line fix does not need a spec. Override the stages,
-  record why, and still run the gates.
+- **Not heavyweight for small work.** A one-line fix does not need a spec. Start it in the
+  quick lane (`factory feature new <slug> --lane quick`): no spec or design stages, but the same
+  scope check, gates and review. See [the pipeline](02-pipeline.md#the-quick-lane).
 
 ## When to use the full line
 

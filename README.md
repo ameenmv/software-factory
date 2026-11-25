@@ -90,6 +90,7 @@ tests/                   end-to-end tests of the CLI, hooks and delegation
 
 ```bash
 factory feature new partial-refunds        # specs/001-partial-refunds at stage intake
+factory feature new fix-typo --lane quick  # small change: intake, brief, implement, gates, review, ship
 factory status                             # every feature, its stage, its blockers
 factory check partial-refunds              # what blocks the current stage
 factory advance partial-refunds            # next stage, only if the exit criterion holds
