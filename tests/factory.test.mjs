@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
-import { globToRegExp, parseFrontmatter, scopeCheck, summarize, validateBrief } from '../lib/index.mjs';
+import { globToRegExp, parseFrontmatter, renderHandbook, scopeCheck, section, selectHandbook, summarize, validateBrief } from '../lib/index.mjs';
 
 const PKG = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 let repo;
@@ -338,6 +338,63 @@ writeFileSync(out + '/report.md', 'changed src/index.js\\n');
     assert.equal(ok.status, 0, ok.stdout + ok.stderr);
     assert.match(ok.stdout, /changed src\/index\.js/);
     assert.match(ok.stdout, /scope: ok/);
+  });
+});
+
+describe('handbook injection', () => {
+  const hb = () => join(repo, '.claude/skills/demo-engineering');
+  const ref = (name, applies, body) =>
+    writeFileSync(join(hb(), 'references', name), `---\napplies_to:\n${applies.map((g) => `  - "${g}"`).join('\n')}\n---\n${body}\n`);
+
+  before(() => {
+    mkdirSync(join(hb(), 'references'), { recursive: true });
+    writeFileSync(join(hb(), 'SKILL.md'), '---\nname: demo-engineering\ndescription: x\n---\n\n## Golden rules\n\nNever log tokens.\n\n## Engineering judgment\n\nNot injected.\n');
+    ref('backend.md', ['src/**/*.js'], 'Use the result helper for every handler.');
+    ref('frontend.md', ['web/**'], 'Frontend only.');
+    writeFileSync(join(hb(), 'references', 'untagged.md'), 'Read on demand only.\n');
+  });
+
+  test('selects the golden rules and references whose applies_to match allowed_files', () => {
+    const s = selectHandbook(repo, { handbookMaxChars: 10000 }, ['src/index.js']);
+    assert.deepEqual(s.parts.map((p) => p.source), [
+      '.claude/skills/demo-engineering/SKILL.md#golden-rules',
+      '.claude/skills/demo-engineering/references/backend.md',
+    ]);
+    const text = renderHandbook(s);
+    assert.match(text, /Never log tokens/);
+    assert.match(text, /result helper/);
+    assert.doesNotMatch(text, /Frontend only|Read on demand|Not injected/);
+  });
+
+  test('drops whole parts over the budget and names them instead', () => {
+    const s = selectHandbook(repo, { handbookMaxChars: 20 }, ['src/index.js']);
+    assert.equal(s.parts.length, 1);
+    assert.deepEqual(s.skipped.map((x) => x.source), ['.claude/skills/demo-engineering/references/backend.md']);
+    assert.match(renderHandbook(s), /Read these before editing:\n- .*backend\.md/);
+  });
+
+  test('section() reads one heading and stops at the next', () => {
+    assert.equal(section('## A\none\n## B\ntwo', 'a'), 'one');
+    assert.equal(section('# T\n## B\ntwo\n', 'B'), 'two');
+    assert.equal(section('## A\n', 'missing'), '');
+  });
+
+  test('delegate injects the handbook into the prompt and records it in the ledger', () => {
+    const brief = 'specs/001-greet/briefs/b1.md';
+    const preview = factory('handbook', brief);
+    assert.match(preview.stdout, /inject {2}\.claude\/skills\/demo-engineering\/references\/backend\.md/);
+    sh('git', ['checkout', '-q', '--', 'src']);
+    sh('git', ['add', '-A']);
+    sh('git', ['commit', '-qm', 'handbook', '--no-verify']);
+    const r = factory('delegate', brief, '--only', 'node-broken');
+    assert.match(r.stdout, /handbook context: .*golden-rules, .*backend\.md/);
+    const runs = join(repo, '.factory/runs/001-greet');
+    const last = readdirSync(runs).sort().at(-1);
+    const prompt = readFileSync(join(runs, last, 'prompt.md'), 'utf8');
+    assert.ok(prompt.indexOf('Never log tokens') < prompt.indexOf('The brief follows.'));
+    assert.match(prompt, /result helper/);
+    const row = JSON.parse(readFileSync(join(repo, 'factory/ledger.jsonl'), 'utf8').trim().split('\n').at(-1));
+    assert.equal(row.handbook.length, 2);
   });
 });
 

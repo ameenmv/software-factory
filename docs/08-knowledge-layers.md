@@ -53,3 +53,32 @@ flowchart TD
 
 ### State
 - `state.json` and the stage artifacts are the source of truth for progress. A new session reads them through the SessionStart hook and resumes, instead of reconstructing from chat history.
+
+### Handbook context for implementers
+
+Claude loads the handbook skill on its own. An implementer behind an adapter never does, and it
+is the cheaper model that needs the conventions most. `factory delegate` closes that gap by
+injecting part of the handbook into every prompt:
+
+- the `## Golden rules` section of `SKILL.md`, always;
+- each file in `references/` whose frontmatter `applies_to` globs match one of the brief's
+  `allowed_files`.
+
+```markdown
+---
+applies_to:
+  - "src/api/**"
+  - "src/db/**"
+---
+# Backend conventions
+...
+```
+
+References without `applies_to` are never injected. Tag only what an implementer must follow
+to get a slice accepted; deep background stays on demand. Whole parts are kept in order up to
+`handbookMaxChars` (default 16000). Parts over the budget are named in the prompt, never cut in half.
+
+`factory handbook <brief>` shows what a brief would get before you delegate. Each ledger row
+records the parts that were injected (`handbook`), so the retro can tell whether a reference
+changes the accept rate. The handbook is found at `config.handbook`, or at the single
+`.claude/skills/*-engineering/` folder.

@@ -2,7 +2,7 @@
 // factory: the command line for the Software Factory pipeline. Zero dependencies.
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   LANES,
@@ -11,6 +11,8 @@ import {
   changedFiles,
   git,
   isRisky,
+  renderHandbook,
+  selectHandbook,
   listFeatures,
   loadConfig,
   readLedger,
@@ -89,10 +91,8 @@ const IMPLEMENTER_RULES = `You are an implementer in a software factory. Follow 
    API: if a function you need does not exist, say so instead of calling it.
 5. Do not read or write .env files or credentials.
 6. Finish with the report described in the brief's Report section. A run without a report counts as failed.
-
-The brief follows.
-
----
+7. If a project handbook section follows, its rules are this repository's conventions. Follow them;
+   where the brief and the handbook disagree, the brief wins and you say so in your report.
 
 `;
 
@@ -117,6 +117,7 @@ Briefs and scope
   scope <brief> [--base REF]      Fail if the diff touches files outside allowed_files
   risk [--base REF]               List changed files that match riskyPaths
   delegate <brief> [--only name]  Send a brief to the implementer lanes in order; quota falls through
+  handbook <brief>                Show which handbook parts delegate injects for this brief
 
 Gates and ledger
   gates [--only name]             Run every configured gate; stamp the tree when all pass
@@ -305,12 +306,15 @@ Setup
     const runDir = join(root, config.stateDir, 'runs', feature, `${id}-${stamp}`);
     mkdirSync(runDir, { recursive: true });
     const prompt = join(runDir, 'prompt.md');
-    writeFileSync(prompt, IMPLEMENTER_RULES + readFileSync(briefPath, 'utf8'));
+    const handbook = selectHandbook(root, config, r.data.allowed_files ?? []);
+    writeFileSync(prompt, IMPLEMENTER_RULES + renderHandbook(handbook) + 'The brief follows.\n\n---\n\n' + readFileSync(briefPath, 'utf8'));
+    const injected = handbook.parts.map((p) => p.source);
+    if (handbook.dir) out(`delegate: handbook context: ${injected.length ? injected.join(', ') : 'none matched'}${handbook.skipped.length ? ` (${handbook.skipped.length} over budget)` : ''}`);
 
     const lanes = (config.implementers ?? []).filter((i) => !flags.only || i.name === flags.only);
     if (!lanes.length) die(flags.only ? `no implementer named "${flags.only}"` : 'no implementers configured');
     const record = (lane, outcome, minutes, note) =>
-      appendLedger(root, config, { feature, brief: id, implementer: lane.name, model: lane.model, outcome, minutes, note });
+      appendLedger(root, config, { feature, brief: id, implementer: lane.name, model: lane.model, outcome, minutes, note, handbook: injected });
 
     for (const lane of lanes) {
       const outDir = join(runDir, lane.name);
@@ -348,6 +352,24 @@ Setup
       return;
     }
     die(`no implementer completed ${id}`);
+  },
+
+  handbook([file]) {
+    if (!file) die('usage: factory handbook <brief.md>');
+    const { root, config } = ctx();
+    const r = validateBrief(readFileSync(file, 'utf8'));
+    if (!r.data) die(`invalid brief: ${r.errors.join('; ')}`);
+    const s = selectHandbook(root, config, r.data.allowed_files ?? []);
+    if (!s.dir) return out('no handbook found (set "handbook" in factory.config.json, or add .claude/skills/<project>-engineering/)');
+    out(`handbook: ${relPath(root, s.dir)}`);
+    let chars = 0;
+    for (const p of s.parts) {
+      out(`  inject  ${p.source} (${p.text.length} chars)`);
+      chars += p.text.length;
+    }
+    for (const x of s.skipped) out(`  skip    ${x.source}: ${x.reason}`);
+    if (!s.parts.length) out('  nothing matches; tag references with `applies_to:` globs in their frontmatter');
+    out(`  total   ${chars} chars`);
   },
 
   ledger([sub], flags) {
@@ -556,3 +578,6 @@ try {
   die(e.message);
 }
 
+function relPath(root, p) {
+  return relative(root, p).split('\\').join('/');
+}

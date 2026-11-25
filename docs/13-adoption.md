@@ -47,7 +47,7 @@ following its own instructions; the factory reads its artifacts (`spec.md`, `pla
 | Day | Do |
 |---|---|
 | 1 | `init`. Edit `factory.config.json` gates until `factory gates` is green on main. Write `AGENTS.md` golden rules (start with five). |
-| 2 | Write the handbook skill from `factory/templates/handbook/SKILL.md`. Seed the review checklist from your last ten review comments. |
+| 2 | Write the handbook skill from `factory/templates/handbook/SKILL.md`. Seed the review checklist from your last ten review comments. Tag the references implementers need with `applies_to` and check one brief with `factory handbook`. |
 | 3 | Run one small feature through the full line, overriding nothing. Expect friction; write it down. |
 | 4 | Run two features. Use `--override` where the line is too heavy, with honest reasons. |
 | 5 | Retro. Read the overrides and the ledger. Make three factory changes. |
@@ -62,6 +62,8 @@ following its own instructions; the factory reads its artifacts (`spec.md`, `pla
   "gates": [{ "name": "test", "run": "npm test" }],
   "implementers": [{ "name": "opencode", "adapter": "scripts/factory/adapters/opencode.sh", "model": "opencode/big-pickle" }],
   "riskyPaths": ["**/auth/**"],           // triggers security-auditor
+  "handbook": ".claude/skills/acme-engineering", // optional; found automatically if there is one *-engineering skill
+  "handbookMaxChars": 16000,               // budget for handbook context injected into each brief
   "lockedPaths": ["src/generated/**"],    // agents may read, never write
   "protectedBranches": ["main"],          // agents never push here directly
   "stopRequiresGates": true,              // Stop hook enforcement
