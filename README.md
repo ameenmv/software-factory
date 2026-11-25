@@ -46,7 +46,7 @@ Longer prompts do not fix any of that. Structure does.
 
 | Failure | The factory's answer |
 |---|---|
-| Forgets rules | Hooks block the action: `.env` reads, branch deletion, force push, ungated commits |
+| Forgets rules | Hooks block the action: `.env` reads in Claude Code; force push, branch deletion and ungated commits in real git hooks |
 | Claims "tests pass" without proof | A gate stamp tied to a fingerprint of the exact tree; commits are refused without it |
 | Scope creep | Each brief lists `allowed_files`; `factory scope` fails the diff otherwise |
 | Expensive model doing cheap work | Briefs are delegated to implementer lanes, cheapest first, with quota fall-through |

@@ -67,6 +67,7 @@ following its own instructions; the factory reads its artifacts (`spec.md`, `pla
   "evalSetup": "npm ci",                  // optional; runs in each eval worktree before the implementer
   "lockedPaths": ["src/generated/**"],    // agents may read, never write
   "protectedBranches": ["main"],          // agents never push here directly
+  "gitHooks": { "enforce": "agents" },   // or "everyone": apply the agent git-hook rules to people too
   "stopRequiresGates": true,              // Stop hook enforcement
   "formatOnEdit": "npx prettier --write {file}"  // optional, runs after each edit
 }

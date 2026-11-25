@@ -10,6 +10,14 @@ import {
   appendLedger,
   changedFiles,
   git,
+  enforcedFor,
+  hooksDir,
+  hooksInstalled,
+  installHooks,
+  isAgent,
+  parsePrePush,
+  prePushViolations,
+  uninstallHooks,
   isRisky,
   renderHandbook,
   selectHandbook,
@@ -130,6 +138,7 @@ Evals
 Gates and ledger
   gates [--only name]             Run every configured gate; stamp the tree when all pass
   stamp-check                     Exit 0 if the last green gate run matches the current tree
+  githooks install|uninstall      Real git pre-commit and pre-push hooks for this clone (init installs them)
   ledger add --feature F --brief B --implementer I --outcome accepted|rejected|failed|quota
              [--model M] [--minutes N] [--cost N] [--findings N] [--note "..."]
   report [--html file]            Implementer scorecard from the ledger
@@ -281,6 +290,61 @@ Setup
     }
     if (!results.every((r) => r.code === 0)) process.exitCode = 1;
     else if (flags.only) out('(single gate: no stamp written)');
+  },
+
+  // Entry point for the installed git hooks. A pre-existing hook kept as <name>.local runs first.
+  githook([name, ...args]) {
+    const { root, config } = ctx();
+    const stdin = name === 'pre-push' ? readFileSync(0, 'utf8') : '';
+    const local = join(hooksDir(root), `${name}.local`);
+    if (existsSync(local)) {
+      const r = spawnSync('sh', [local, ...args], { cwd: root, input: stdin, stdio: ['pipe', 'inherit', 'inherit'] });
+      if (r.status !== 0) process.exit(r.status ?? 1);
+    }
+    const strict = enforcedFor(config);
+    const who = isAgent() ? 'agent' : 'everyone';
+    const blocked = (problems, hint) => {
+      err(`software-factory ${name}: blocked (${who} rule)`);
+      for (const p of problems) err(`  - ${p}`);
+      if (hint) err(hint);
+      process.exit(1);
+    };
+
+    if (name === 'pre-commit') {
+      if (!strict || !(config.gates ?? []).length) return;
+      const s = stampStatus(root, config);
+      if (!s.valid) blocked([`gates are not green for this tree: ${s.reason}`], 'Run `node factory/cli/bin/factory.mjs gates` and commit after every gate passes.');
+      return;
+    }
+    if (name === 'pre-push') {
+      const isAncestor = (a, b) => {
+        if (spawnSync('git', ['cat-file', '-e', `${a}^{commit}`], { cwd: root }).status !== 0) return null;
+        return spawnSync('git', ['merge-base', '--is-ancestor', a, b], { cwd: root }).status === 0;
+      };
+      const problems = prePushViolations(parsePrePush(stdin), {
+        protectedBranches: config.protectedBranches ?? ['main', 'master'],
+        strict,
+        isAncestor,
+      });
+      if (problems.length) blocked(problems);
+      return;
+    }
+    die(`unknown git hook "${name}"`);
+  },
+
+  githooks([sub], flags) {
+    const { root } = ctx();
+    if (sub === 'install') {
+      const r = installHooks(root, { force: Boolean(flags.force) });
+      for (const l of r.log) out(l);
+      return out(`git hooks installed in ${relPath(root, r.dir) || r.dir}`);
+    }
+    if (sub === 'uninstall') {
+      const r = uninstallHooks(root);
+      for (const l of r.log) out(l);
+      return out(r.log.length ? 'git hooks removed' : 'no factory git hooks installed');
+    }
+    die('usage: factory githooks install [--force] | uninstall');
   },
 
   'stamp-check'() {
@@ -634,6 +698,11 @@ ${diff}
     }
     if (plugin) pluginSettings(target);
     else mergeSettings(target);
+    try {
+      for (const l of installHooks(target).log) out(`${l} (git)`);
+    } catch (e) {
+      out(`skip  git hooks (${e.message}); run \`factory githooks install\` later`);
+    }
     if (!existsSync(join(target, 'factory.config.json'))) {
       writeFileSync(join(target, 'factory.config.json'), JSON.stringify(detectConfig(target), null, 2) + '\n');
       out('add   factory.config.json (review the detected gates)');
@@ -665,6 +734,7 @@ ${diff}
         hasPlugin(root) ? `plugin ${PLUGIN_ID} enabled (hooks come from the plugin)` : '.claude/settings.json has factory hooks',
         hasPlugin(root) !== hasHooks(root),
       ],
+      ['git hooks installed (pre-commit, pre-push; per clone: `factory githooks install`)', hooksInstalled(root)],
       ['AGENTS.md present', existsSync(join(root, 'AGENTS.md'))],
       ['.factory/ is git-ignored', existsSync(join(root, '.gitignore')) && /^\.factory\/?$/m.test(readFileSync(join(root, '.gitignore'), 'utf8'))],
       ['at least one implementer configured', config.implementers.length > 0],

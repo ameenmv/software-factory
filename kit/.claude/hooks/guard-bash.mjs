@@ -22,6 +22,14 @@ function block(reason) {
   process.exit(2);
 }
 
+// The git hooks (factory githooks) are the real enforcement for commits and pushes; this guard is
+// the early, friendly warning. What it must still stop is an agent switching those hooks off.
+if (/core\.hooks[Pp]ath/.test(cmd)) block('changing core.hooksPath disables the factory git hooks.');
+if (/\.git[\\/]+hooks\b/.test(cmd)) block('the git hooks directory is managed by `factory githooks`; ask the user to change it.');
+if (/\bgithooks\s+uninstall\b/.test(cmd)) block('removing the factory git hooks is for the user to do, not an agent.');
+if (/\b(CLAUDECODE|FACTORY_AGENT)\s*=|\bunset\s+(CLAUDECODE|FACTORY_AGENT)\b|-u\s*(CLAUDECODE|FACTORY_AGENT)\b/.test(cmd))
+  block('CLAUDECODE and FACTORY_AGENT tell the git hooks an agent is acting; they cannot be changed.');
+
 // Split on shell separators so `true && git commit` is still seen as a commit.
 const parts = cmd.split(/&&|\|\||;|\n|\|/).map((s) => s.trim()).filter(Boolean);
 

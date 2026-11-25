@@ -9,7 +9,7 @@ The kit installs five hooks, wired in `.claude/settings.json`:
 | Hook | Event | Matcher | Does |
 |---|---|---|---|
 | `session-context.mjs` | SessionStart | | Injects `factory status` so the session resumes from state |
-| `guard-bash.mjs` | PreToolUse | `Bash` | Blocks secrets, destructive git, ungated commits |
+| `guard-bash.mjs` | PreToolUse | `Bash` | Blocks secrets and destructive commands, warns early on git rules, protects the git hooks |
 | `guard-files.mjs` | PreToolUse | `Read\|Edit\|Write\|MultiEdit\|NotebookEdit` | Blocks secrets, keys, `.git/`, locked paths |
 | `post-edit.mjs` | PostToolUse | `Edit\|Write\|MultiEdit` | Runs `formatOnEdit` on the touched file |
 | `stop-gates.mjs` | Stop | | Sends the agent back once if code changed without green gates |
@@ -31,9 +31,49 @@ The kit installs five hooks, wired in `.claude/settings.json`:
 
 Commands are split on `&&`, `||`, `;`, `|` and newlines, so chaining does not bypass a rule.
 
+**This guard reads command text, so it can be fooled.** `command git push -f`, `bash -c "..."`,
+a git alias or a script file all look different from the patterns. For commits and pushes it is
+the early warning, not the enforcement: the [git hooks](#git-hooks) are. What the guard must
+still stop is an agent switching those hooks off:
+
+| Blocked | Why |
+|---|---|
+| `core.hooksPath` anywhere in the command | redirects git away from the factory hooks |
+| any path under `.git/hooks` | the hooks themselves |
+| `factory githooks uninstall` | removing the hooks is the user's call |
+| setting or unsetting `CLAUDECODE` / `FACTORY_AGENT` | the hooks use them to know an agent is acting |
+
+## Git hooks
+
+`factory init` installs a `pre-commit` and a `pre-push` hook into the clone (`factory githooks
+install` does it again, for example in each new clone; `doctor` reports when they are missing).
+Git runs them for every commit and push, whatever the command looked like, so they hold where
+pattern matching cannot. Each is a short shim that calls `factory githook <name>`. A hook that
+was already there is kept as `<name>.local` and runs first, and `githooks uninstall` puts it back.
+
+The rules distinguish people from agents. Claude Code sets `CLAUDECODE=1` in the shell it runs
+commands in, and other runners can set `FACTORY_AGENT=1`.
+
+| Rule | Applies to |
+|---|---|
+| no force push (history rewrite) to a protected branch | everyone |
+| no deleting a protected branch on the remote | everyone |
+| no direct push to a protected branch | agents |
+| no force push to any branch | agents |
+| no deleting any remote branch | agents |
+| no commit unless the gate stamp matches the tree (when gates are configured) | agents |
+
+Set `"gitHooks": { "enforce": "everyone" }` to apply the agent rules to people as well.
+
 The protected-branch rule fits teams that merge through pull requests. If your release flow is
 "push develop, then push main", set `protectedBranches` to the branches agents should never push
 to directly, or to `[]` and keep the human as the one who pushes to production.
+
+What git hooks cannot cover: `git reset --hard`, `git clean` and local `git branch -D` run no
+hook, so those stay with the Bash guard (local branches are recoverable from the reflog). A
+person can always skip hooks with `--no-verify`. The layer nobody on the machine can skip is
+**branch protection on the server**: require pull requests and block force pushes on `main` in
+GitHub or GitLab settings.
 
 ## guard-files rules
 

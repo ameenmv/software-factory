@@ -6,10 +6,15 @@ import { dirname, join, resolve } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
-import { globToRegExp, parseFrontmatter, renderHandbook, scopeCheck, section, selectHandbook, summarize, summarizeHandbook, validateBrief } from '../lib/index.mjs';
+import { globToRegExp, parseFrontmatter, prePushViolations, renderHandbook, scopeCheck, section, selectHandbook, summarize, summarizeHandbook, validateBrief } from '../lib/index.mjs';
 
 const PKG = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 let repo;
+
+// The git hooks apply agent rules when CLAUDECODE=1. Tests start as a person, wherever they run
+// (including inside Claude Code), and opt into agent mode explicitly.
+delete process.env.CLAUDECODE;
+delete process.env.FACTORY_AGENT;
 
 const sh = (cmd, args, opts = {}) => execFileSync(cmd, args, { cwd: repo, encoding: 'utf8', ...opts });
 const factory = (...args) => spawnSync('node', [join(repo, 'factory/cli/bin/factory.mjs'), ...args], { cwd: repo, encoding: 'utf8' });
@@ -535,6 +540,112 @@ writeFileSync(arg('--out') + '/report.md', 'Thinking...\\n- [ ] UNVERIFIED high 
     assert.match(r.stderr, /free review unavailable \(exit 3, no report\)/);
     sh('git', ['checkout', '-q', '--', '.']);
     rmSync(join(repo, 'specs/001-greet/review.md'), { force: true });
+  });
+});
+
+describe('git hooks', () => {
+  const Z = '0'.repeat(40);
+  const A = 'a'.repeat(40);
+  const B = 'b'.repeat(40);
+  const decide = (updates, strict, ancestor = true) =>
+    prePushViolations(
+      updates.map(([localSha, remoteRef, remoteSha]) => ({ localRef: 'x', localSha, remoteRef, remoteSha })),
+      { protectedBranches: ['main'], strict, isAncestor: () => ancestor },
+    );
+
+  test('pre-push policy: everyone vs agents', () => {
+    // Everyone: no force push or deletion of a protected branch.
+    assert.equal(decide([[A, 'refs/heads/main', B]], false).length, 0); // fast-forward to main is fine for people
+    assert.match(decide([[A, 'refs/heads/main', B]], false, false)[0], /rewriting the history of main/);
+    assert.match(decide([[Z, 'refs/heads/main', B]], false)[0], /deleting the protected branch main/);
+    assert.equal(decide([[A, 'refs/heads/feat', B]], false, false).length, 0); // people may force their own branches
+    assert.equal(decide([[Z, 'refs/heads/feat', B]], false).length, 0);
+    // Agents: none of that, and no direct pushes to main.
+    assert.match(decide([[A, 'refs/heads/main', B]], true)[0], /pushing directly to main/);
+    assert.match(decide([[A, 'refs/heads/feat', B]], true, false)[0], /rewriting the history of feat/);
+    assert.match(decide([[Z, 'refs/heads/feat', B]], true)[0], /deleting the remote branch feat/);
+    assert.equal(decide([[A, 'refs/heads/feat', Z]], true).length, 0); // a new branch is fine
+    assert.equal(decide([[A, 'refs/heads/feat', B]], true, null).length, 1); // unknown remote commit: cautious for agents
+    assert.equal(decide([[A, 'refs/tags/v1', B]], true, false).length, 0); // tags are out of scope
+  });
+
+  test('installed hooks enforce the policy on real commits and pushes', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'factory-githooks-'));
+    const remote = mkdtempSync(join(tmpdir(), 'factory-remote-'));
+    const run = (args, env = {}) => spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: { ...process.env, ...env } });
+    const agent = { CLAUDECODE: '1' };
+    execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote]);
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir });
+    run(['config', 'user.email', 't@example.com']);
+    run(['config', 'user.name', 't']);
+    // A hook that was here first must survive and keep running.
+    mkdirSync(join(dir, '.git/hooks'), { recursive: true });
+    writeFileSync(join(dir, '.git/hooks/pre-commit'), '#!/bin/sh\necho local-hook-ran >&2\n[ ! -f block-me ]\n');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'x', scripts: { test: 'node -e "process.exit(0)"' } }));
+    const init = spawnSync('node', [join(PKG, 'bin/factory.mjs'), 'init', dir], { encoding: 'utf8' });
+    assert.equal(init.status, 0, init.stderr);
+    assert.match(init.stdout, /keep {2}pre-commit -> pre-commit\.local/);
+    assert.ok(existsSync(join(dir, '.git/hooks/pre-commit.local')));
+    run(['remote', 'add', 'origin', remote]);
+    run(['add', '-A']);
+
+    // pre-commit: an agent needs a green stamp; a person does not. The old hook runs either way.
+    const agentCommit = run(['commit', '-qm', 'init'], agent);
+    assert.notEqual(agentCommit.status, 0);
+    assert.match(agentCommit.stderr, /local-hook-ran/);
+    assert.match(agentCommit.stderr, /blocked \(agent rule\)[\s\S]*gates are not green/);
+    const personCommit = run(['commit', '-qm', 'init']);
+    assert.equal(personCommit.status, 0, personCommit.stderr);
+    writeFileSync(join(dir, 'block-me'), '');
+    run(['add', 'block-me']);
+    assert.notEqual(run(['commit', '-qm', 'blocked by local hook']).status, 0);
+    run(['rm', '-q', '--cached', 'block-me']);
+    rmSync(join(dir, 'block-me'));
+
+    // pre-push: people may push main; agents may not, and nobody may rewrite it.
+    assert.equal(run(['push', '-q', 'origin', 'main']).status, 0);
+    run(['commit', '-q', '--allow-empty', '-m', 'second']);
+    const agentMain = run(['push', '-q', 'origin', 'main'], agent);
+    assert.notEqual(agentMain.status, 0);
+    assert.match(agentMain.stderr, /pushing directly to main/);
+    // The bypasses the regex used to miss are caught, because git runs the hook regardless.
+    const disguised = spawnSync('sh', ['-c', 'command git push -q origin HEAD:refs/heads/main'], { cwd: dir, encoding: 'utf8', env: { ...process.env, ...agent } });
+    assert.notEqual(disguised.status, 0);
+    assert.equal(run(['push', '-q', 'origin', 'main']).status, 0); // the same push by a person
+    run(['reset', '-q', '--hard', 'HEAD~1']);
+    run(['commit', '-q', '--allow-empty', '-m', 'divergent']);
+    const force = run(['push', '-q', '--force', 'origin', 'main']);
+    assert.notEqual(force.status, 0);
+    assert.match(force.stderr, /blocked \(everyone rule\)[\s\S]*rewriting the history of main/);
+
+    // A feature branch: people may force it, agents may not; agents may not delete it.
+    run(['checkout', '-q', '-b', 'feat']);
+    assert.equal(run(['push', '-q', 'origin', 'feat'], agent).status, 0);
+    run(['commit', '-q', '--amend', '--allow-empty', '-m', 'amended']);
+    assert.match(run(['push', '-q', '--force', 'origin', 'feat'], agent).stderr, /rewriting the history of feat/);
+    assert.equal(run(['push', '-q', '--force', 'origin', 'feat']).status, 0);
+    assert.match(run(['push', '-q', 'origin', '--delete', 'feat'], agent).stderr, /deleting the remote branch feat/);
+    assert.match(run(['push', '-q', 'origin', ':main']).stderr, /deleting the protected branch main/);
+
+    // doctor sees the hooks; uninstall gives the original hook back.
+    const cli = join(dir, 'factory/cli/bin/factory.mjs');
+    assert.match(spawnSync('node', [cli, 'doctor'], { cwd: dir, encoding: 'utf8' }).stdout, /ok {3}git hooks installed/);
+    assert.match(spawnSync('node', [cli, 'githooks', 'uninstall'], { cwd: dir, encoding: 'utf8' }).stdout, /restore pre-commit/);
+    assert.match(readFileSync(join(dir, '.git/hooks/pre-commit'), 'utf8'), /local-hook-ran/);
+    assert.ok(!existsSync(join(dir, '.git/hooks/pre-push')));
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
+  });
+
+  test('bash guard stops an agent from switching the hooks off', () => {
+    const bash = (command) => hook('guard-bash.mjs', { tool_input: { command } }).status;
+    assert.equal(bash('git -c core.hooksPath=/dev/null push origin main'), 2);
+    assert.equal(bash('git config core.hooksPath .nohooks'), 2);
+    assert.equal(bash('rm .git/hooks/pre-push'), 2);
+    assert.equal(bash('CLAUDECODE= git push origin main'), 2);
+    assert.equal(bash('env -u CLAUDECODE git push'), 2);
+    assert.equal(bash('node factory/cli/bin/factory.mjs githooks uninstall'), 2);
+    assert.equal(bash('git status'), 0);
   });
 });
 

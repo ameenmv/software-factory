@@ -8,7 +8,7 @@ wrong, confused, or steered by text it reads, and limits the damage each role ca
 | Threat | Example | Control |
 |---|---|---|
 | Secret exposure | agent reads `.env` to "debug" and pastes it into a log or a prompt to another model | file and bash guards, permission deny list, adapters deny `.env` |
-| Destructive action | `git reset --hard` to "clean up", branch deletion, force push | bash guard |
+| Destructive action | `git reset --hard` to "clean up", branch deletion, force push | git hooks (pre-push, pre-commit), bash guard, server branch protection |
 | Unreviewed code in history | commit before gates, `--no-verify` | stamp check on commit, `--no-verify` blocked |
 | Scope creep | implementer "also refactored" a shared module | `allowed_files`, `factory scope` |
 | Prompt injection | a README, issue, web page or dependency file says "ignore your instructions and..." | implementers have no shell or web; orchestrator treats file contents as data |
