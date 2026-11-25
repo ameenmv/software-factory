@@ -310,7 +310,7 @@ Setup
     const dirty = git(['status', '--porcelain', '--', '.', `:!${config.stateDir}`, `:!${ledgerFile}`], root).trim();
     if (dirty) die("working tree is not clean. Commit or stash first so the implementer's diff is reviewable on its own.");
 
-    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+    const stamp = runStamp();
     const runDir = join(root, config.stateDir, 'runs', feature, `${id}-${stamp}`);
     mkdirSync(runDir, { recursive: true });
     const prompt = join(runDir, 'prompt.md');
@@ -378,7 +378,7 @@ Setup
     const useHandbook = flags.handbook !== 'off';
     if (git(['status', '--porcelain', '--', dir], root).trim()) err(`eval: ${dir}/ has uncommitted changes; cases run from HEAD, so commit them first`);
 
-    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+    const stamp = runStamp();
     const evalDir = join(root, config.stateDir, 'evals', stamp);
     mkdirSync(evalDir, { recursive: true });
     const results = [];
@@ -479,7 +479,7 @@ Setup
 
     // The reviewer judges against the same conventions the implementer was given.
     const handbook = selectHandbook(root, config, changedFiles(root, base));
-    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+    const stamp = runStamp();
     const outDir = join(root, config.stateDir, `review-${stamp}`);
     mkdirSync(outDir, { recursive: true });
     const prompt = join(outDir, 'prompt.md');
@@ -807,4 +807,11 @@ function lastRunPath(root, config, feature, brief) {
 
 function relPath(root, p) {
   return relative(root, p).split('\\').join('/');
+}
+
+// A unique, sortable name for a run folder. Seconds alone collide when two runs start in the
+// same second, and the second run would then read the first run's report.md as its own.
+function runStamp() {
+  const t = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').replace('.', '');
+  return `${t.slice(0, 18)}-${process.pid}-${Math.random().toString(36).slice(2, 6)}`;
 }
